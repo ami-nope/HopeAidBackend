@@ -39,11 +39,6 @@ services:
     container_name: hopeaid_api
     restart: unless-stopped
     env_file: .env
-    environment:
-      DATABASE_URL: postgresql+asyncpg://hopeaid:hopeaid@db:5432/hopeaid
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
     ports:
       - "8000:8000"
     depends_on:
@@ -51,8 +46,14 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: >
-      sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2"
+    environment:
+      DATABASE_URL: postgresql+psycopg2://hopeaid:hopeaid@db:5432/hopeaid
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      WEB_CONCURRENCY: 2
+      RUN_MIGRATIONS: "true"
+    command: sh scripts/start-web.sh
 
   # ── Celery Worker ─────────────────────────────────────────────────────────────
   worker:
@@ -61,7 +62,7 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://hopeaid:hopeaid@db:5432/hopeaid
+      DATABASE_URL: postgresql+psycopg2://hopeaid:hopeaid@db:5432/hopeaid
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/2
@@ -70,7 +71,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: celery -A app.workers.celery_app worker --loglevel=info -Q ocr,ai,reports,celery
+    command: sh scripts/start-worker.sh
 
   # ── Celery Beat (Scheduler) ───────────────────────────────────────────────────
   beat:
@@ -79,13 +80,13 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://hopeaid:hopeaid@db:5432/hopeaid
+      DATABASE_URL: postgresql+psycopg2://hopeaid:hopeaid@db:5432/hopeaid
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/2
     depends_on:
       - redis
-    command: celery -A app.workers.celery_app beat --loglevel=info
+    command: sh scripts/start-beat.sh
 
   # ── Flower (Celery Monitor) ───────────────────────────────────────────────────
   flower:

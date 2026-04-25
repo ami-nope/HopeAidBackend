@@ -5,6 +5,7 @@ All secrets and config values come from environment variables (.env file).
 Defaults are safe for local development only.
 """
 
+import json
 from functools import lru_cache
 from typing import List, Optional
 
@@ -76,17 +77,25 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
 
     # ─── CORS ─────────────────────────────────────────────────────────────────
-    CORS_ORIGINS: List[str] = [
-        "http://localhost:3000",
-        "https://hopeaid.vercel.app",
-    ]
+    # Accept either comma-separated string or JSON list string from env.
+    CORS_ORIGINS: str = "http://localhost:3000,https://hopeaid.vercel.app"
 
-    @field_validator("CORS_ORIGINS", mode="before")
-    @classmethod
-    def parse_cors_origins(cls, v: str | List[str]) -> List[str]:
-        if isinstance(v, str):
-            return [origin.strip() for origin in v.split(",")]
-        return v
+    @property
+    def cors_origins(self) -> List[str]:
+        """Return CORS origins parsed from either JSON array or CSV string."""
+        raw = (self.CORS_ORIGINS or "").strip()
+        if not raw:
+            return []
+
+        if raw.startswith("["):
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, list):
+                return [str(origin).strip() for origin in parsed if str(origin).strip()]
+
+        return [origin.strip() for origin in raw.split(",") if origin.strip()]
 
     # ─── Storage (S3-compatible) ───────────────────────────────────────────────
     S3_ENDPOINT_URL: Optional[str] = None

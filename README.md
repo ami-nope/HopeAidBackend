@@ -92,11 +92,11 @@ pytest app/tests/test_allocation.py app/tests/test_duplicate.py -v
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `SECRET_KEY` | ✅ | JWT signing key — generate with `openssl rand -hex 32` |
-| `DATABASE_URL` | ✅ | Async PostgreSQL URL (`postgresql+asyncpg://...`) |
+| `DATABASE_URL` | ✅ | Sync PostgreSQL URL (`postgresql+psycopg2://...`) |
 | `REDIS_URL` | ✅ | Redis connection URL |
 | `CELERY_BROKER_URL` | ✅ | Redis URL for Celery broker |
 | `CELERY_RESULT_BACKEND` | ✅ | Redis URL for Celery results |
-| `CORS_ORIGINS` | ✅ | Comma-separated list of allowed origins |
+| `CORS_ORIGINS` | ✅ | Comma-separated origins or JSON array string |
 | `S3_ACCESS_KEY_ID` | ✅ | S3/storage access key |
 | `S3_SECRET_ACCESS_KEY` | ✅ | S3/storage secret |
 | `S3_BUCKET_NAME` | ✅ | S3 bucket for uploads |
@@ -130,24 +130,27 @@ alembic current
 1. **Create a Railway project** and add a PostgreSQL plugin
 2. **Add a Redis plugin**
 3. **Set environment variables** in Railway dashboard (copy from `.env.example`)
-4. **Set the start command**:
+4. **Use included config files**:
+  - `railway.json` (deploy metadata)
+  - `scripts/start-web.sh` (migrations + API startup)
+5. **Set the web service start command**:
    ```
-   alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2
+  sh scripts/start-web.sh
    ```
-5. **Deploy Celery worker** as a separate Railway service with command:
+6. **Deploy Celery worker** as a separate Railway service with command:
    ```
-   celery -A app.workers.celery_app worker --loglevel=info -Q ocr,ai,reports,celery
+  sh scripts/start-worker.sh
    ```
-6. **Deploy Celery beat** as another Railway service:
+7. **Deploy Celery beat** as another Railway service:
    ```
-   celery -A app.workers.celery_app beat --loglevel=info
+  sh scripts/start-beat.sh
    ```
 
 ### Railway Environment Variables
-Railway auto-injects `DATABASE_URL` and `REDIS_URL` from plugins. Override with async driver:
-```
-DATABASE_URL=postgresql+asyncpg://...  (replace postgresql:// prefix)
-```
+Railway auto-injects `DATABASE_URL` and `REDIS_URL` from plugins.
+
+- `DATABASE_URL` values with `postgres://` or `postgresql://` are auto-normalized to sync psycopg2 in app config.
+- Keep `CORS_ORIGINS` as CSV (`https://a.com,https://b.com`) or JSON array string (`["https://a.com","https://b.com"]`).
 
 ---
 
@@ -269,7 +272,7 @@ backend/
 
 ## Key Design Decisions
 
-1. **SQLAlchemy 2.0 async** — not SQLModel; more mature for complex multi-model schemas
+1. **SQLAlchemy 2.0 sync** — not SQLModel; mature and predictable for this service architecture
 2. **Repository-free for v1** — services call SQLAlchemy directly; add repos if needed for testing
 3. **Organization scoping on every query** — multi-tenancy at Python layer, not DB row-level security
 4. **AI is fully optional** — set `ENABLE_AI_FEATURES=false` and system works without OpenAI

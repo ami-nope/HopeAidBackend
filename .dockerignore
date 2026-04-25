@@ -1,0 +1,36 @@
+# VCS
+.git/
+.gitignore
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+env.json
+
+# Python virtual environments
+.venv/
+venv/
+ENV/
+
+# Python caches and test artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local editor settings
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Optional: tests are not needed in production image
+app/tests/
