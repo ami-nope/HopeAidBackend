@@ -1,9 +1,11 @@
 #!/usr/bin/env sh
 set -eu
 
-PORT="${PORT:-8000}"
+PORT="${PORT:-8080}"
 WORKERS="${WEB_CONCURRENCY:-2}"
 LOG_LEVEL="${UVICORN_LOG_LEVEL:-info}"
+
+python scripts/check_database_url.py
 
 if [ "${RUN_MIGRATIONS:-true}" = "true" ]; then
   echo "[startup] Running database migrations..."

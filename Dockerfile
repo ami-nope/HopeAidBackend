@@ -45,12 +45,12 @@ RUN chmod +x scripts/*.sh
 RUN chown -R hopeaid:hopeaid /app
 USER hopeaid
 
-# Expose API port (Railway injects PORT at runtime).
-EXPOSE 8000
+# Expose the Railway-facing HTTP port.
+EXPOSE 8080
 
 # Health check targets Railway-ready /health endpoint.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-  CMD curl -fsS "http://127.0.0.1:${PORT:-8000}/health" || exit 1
+  CMD curl -fsS "http://127.0.0.1:${PORT:-8080}/health" || exit 1
 
 # Production startup command.
 CMD ["sh", "scripts/start-web.sh"]

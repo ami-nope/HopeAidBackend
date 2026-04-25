@@ -130,6 +130,9 @@ alembic current
 1. **Create a Railway project** and add a PostgreSQL plugin
 2. **Add a Redis plugin**
 3. **Set environment variables** in Railway dashboard (copy from `.env.example`)
+   - If you are using Supabase instead of the Railway PostgreSQL plugin, set `DATABASE_URL` manually to the Supabase session pooler URL on port `5432`.
+   - Do not use the direct `db.<project-ref>.supabase.co` host on Railway unless outbound IPv6 is enabled for that service.
+   - In `Settings -> Networking -> Public Networking`, make sure the service domain target port matches the app's listen port. For this repo on Railway, that should be the injected `PORT` value, which is typically `8080`.
 4. **Use included config files**:
   - `railway.json` (deploy metadata)
   - `scripts/start-web.sh` (migrations + API startup)
@@ -150,6 +153,10 @@ alembic current
 Railway auto-injects `DATABASE_URL` and `REDIS_URL` from plugins.
 
 - `DATABASE_URL` values with `postgres://` or `postgresql://` are auto-normalized to sync psycopg2 in app config.
+- Railway PostgreSQL plugin users can keep the auto-injected `DATABASE_URL`.
+- Supabase users should override `DATABASE_URL` with the Supabase session pooler URL from Supabase Dashboard -> Connect.
+- Use the session pooler on port `5432` for this app's FastAPI + SQLAlchemy + Alembic workload.
+- The direct Supabase host `db.<project-ref>.supabase.co:5432` depends on IPv6. Railway outbound IPv6 is disabled by default, so enable it per service if you want to keep using the direct host instead of the pooler.
 - Keep `CORS_ORIGINS` as CSV (`https://a.com,https://b.com`) or JSON array string (`["https://a.com","https://b.com"]`).
 
 ---

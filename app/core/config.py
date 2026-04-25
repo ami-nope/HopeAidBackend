@@ -7,10 +7,10 @@ Defaults are safe for local development only.
 
 import json
 from functools import lru_cache
-from typing import List, Optional
+from typing import Annotated, List, Optional
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # Map of wrong driver prefixes → correct sync psycopg2 prefix
 _ASYNC_TO_SYNC_DRIVERS = {
@@ -78,24 +78,44 @@ class Settings(BaseSettings):
 
     # ─── CORS ─────────────────────────────────────────────────────────────────
     # Accept either comma-separated string or JSON list string from env.
-    CORS_ORIGINS: str = "http://localhost:3000,https://hopeaid.vercel.app"
+    CORS_ORIGINS: Annotated[List[str], NoDecode] = Field(
+        default_factory=lambda: [
+            "http://localhost:3000",
+            "https://hopeaid.vercel.app",
+        ]
+    )
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v: object) -> List[str]:
+        """Accept CORS origins as a list, JSON array string, or CSV string."""
+        if v is None:
+            return []
+
+        if isinstance(v, list):
+            return [str(origin).strip() for origin in v if str(origin).strip()]
+
+        if isinstance(v, str):
+            raw = v.strip()
+            if not raw:
+                return []
+
+            if raw.startswith("["):
+                try:
+                    parsed = json.loads(raw)
+                except json.JSONDecodeError:
+                    parsed = None
+                if isinstance(parsed, list):
+                    return [str(origin).strip() for origin in parsed if str(origin).strip()]
+
+            return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+        return [str(v).strip()] if str(v).strip() else []
 
     @property
     def cors_origins(self) -> List[str]:
-        """Return CORS origins parsed from either JSON array or CSV string."""
-        raw = (self.CORS_ORIGINS or "").strip()
-        if not raw:
-            return []
-
-        if raw.startswith("["):
-            try:
-                parsed = json.loads(raw)
-            except json.JSONDecodeError:
-                parsed = None
-            if isinstance(parsed, list):
-                return [str(origin).strip() for origin in parsed if str(origin).strip()]
-
-        return [origin.strip() for origin in raw.split(",") if origin.strip()]
+        """Return normalized CORS origins."""
+        return self.CORS_ORIGINS
 
     # ─── Storage (S3-compatible) ───────────────────────────────────────────────
     S3_ENDPOINT_URL: Optional[str] = None
