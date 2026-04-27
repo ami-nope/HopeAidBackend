@@ -3,7 +3,7 @@
 from typing import Optional
 from uuid import UUID
 
-from pydantic import EmailStr, Field, field_validator
+from pydantic import EmailStr, Field, field_validator, model_validator
 
 from app.core.constants import UserRole
 from app.schemas.common import HopeAidBase
@@ -28,8 +28,27 @@ class RegisterRequest(HopeAidBase):
 
 
 class LoginRequest(HopeAidBase):
-    email: EmailStr
+    identifier: str = Field(..., min_length=3, max_length=320)
     password: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_identifier_aliases(cls, data):
+        if isinstance(data, dict):
+            value = data.get("identifier") or data.get("email") or data.get("phone")
+            if value is not None:
+                payload = dict(data)
+                payload["identifier"] = value
+                return payload
+        return data
+
+    @field_validator("identifier")
+    @classmethod
+    def normalize_identifier(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("identifier is required")
+        return cleaned
 
 
 class TokenResponse(HopeAidBase):

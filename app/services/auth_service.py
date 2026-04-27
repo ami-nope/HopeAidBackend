@@ -7,6 +7,7 @@ Synchronous — no async, no await. Redis and DB calls are all sync.
 """
 
 import uuid
+import re
 from datetime import UTC, datetime
 from typing import Optional
 
@@ -30,9 +31,9 @@ from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse
 
 logger = get_logger(__name__)
 
-FAILED_EMAIL_PREFIX = "auth:failed:email:"
+FAILED_IDENTIFIER_PREFIX = "auth:failed:identifier:"
 FAILED_IP_PREFIX = "auth:failed:ip:"
-LOCK_EMAIL_PREFIX = "auth:lock:email:"
+LOCK_IDENTIFIER_PREFIX = "auth:lock:identifier:"
 LOCK_IP_PREFIX = "auth:lock:ip:"
 
 
@@ -69,15 +70,46 @@ class AuthService:
         return email.strip().lower()
 
     @staticmethod
+    def _normalize_phone(phone: str) -> str:
+        return re.sub(r"\D", "", phone)
+
+    @classmethod
+    def _is_email_identifier(cls, identifier: str) -> bool:
+        return "@" in identifier
+
+    @classmethod
+    def _normalize_login_identifier(cls, identifier: str) -> tuple[str, str]:
+        cleaned = identifier.strip()
+        if cls._is_email_identifier(cleaned):
+            return "email", cls._normalize_email(cleaned)
+
+        phone_digits = cls._normalize_phone(cleaned)
+        if phone_digits:
+            return "phone", phone_digits
+
+        return "unknown", cleaned.lower()
+
+    @classmethod
+    def _phone_candidates(cls, identifier: str) -> set[str]:
+        cleaned = identifier.strip()
+        phone_digits = cls._normalize_phone(cleaned)
+
+        candidates = {cleaned}
+        if phone_digits:
+            candidates.add(phone_digits)
+            candidates.add(f"+{phone_digits}")
+        return {candidate for candidate in candidates if candidate}
+
+    @staticmethod
     def _normalize_client_ip(client_ip: Optional[str]) -> str:
         return client_ip.strip() if client_ip else "unknown"
 
-    def _auth_keys(self, email: str, client_ip: Optional[str]) -> dict[str, str]:
+    def _auth_keys(self, identifier_key: str, client_ip: Optional[str]) -> dict[str, str]:
         safe_ip = self._normalize_client_ip(client_ip)
         return {
-            "email_failures": f"{FAILED_EMAIL_PREFIX}{email}",
+            "identifier_failures": f"{FAILED_IDENTIFIER_PREFIX}{identifier_key}",
             "ip_failures": f"{FAILED_IP_PREFIX}{safe_ip}",
-            "email_lock": f"{LOCK_EMAIL_PREFIX}{email}",
+            "identifier_lock": f"{LOCK_IDENTIFIER_PREFIX}{identifier_key}",
             "ip_lock": f"{LOCK_IP_PREFIX}{safe_ip}",
         }
 
@@ -110,19 +142,19 @@ class AuthService:
             return 0
         return ttl if ttl > 0 else 0
 
-    def _assert_login_allowed(self, email: str, client_ip: Optional[str]) -> None:
-        keys = self._auth_keys(email, client_ip)
-        email_lock_ttl = self._active_lock_ttl(keys["email_lock"])
+    def _assert_login_allowed(self, identifier_key: str, client_ip: Optional[str]) -> None:
+        keys = self._auth_keys(identifier_key, client_ip)
+        identifier_lock_ttl = self._active_lock_ttl(keys["identifier_lock"])
         ip_lock_ttl = self._active_lock_ttl(keys["ip_lock"])
-        retry_after = max(email_lock_ttl, ip_lock_ttl)
+        retry_after = max(identifier_lock_ttl, ip_lock_ttl)
         if retry_after > 0:
             raise AuthRateLimitError(retry_after)
 
-    def _record_failed_login(self, email: str, client_ip: Optional[str]) -> None:
-        keys = self._auth_keys(email, client_ip)
+    def _record_failed_login(self, identifier_key: str, client_ip: Optional[str]) -> None:
+        keys = self._auth_keys(identifier_key, client_ip)
 
-        email_failures = self._increment_fail_counter(
-            keys["email_failures"],
+        identifier_failures = self._increment_fail_counter(
+            keys["identifier_failures"],
             settings.AUTH_FAILURE_WINDOW_SECONDS,
         )
         ip_failures = self._increment_fail_counter(
@@ -131,10 +163,10 @@ class AuthService:
         )
 
         if (
-            email_failures is not None
-            and email_failures >= settings.AUTH_MAX_FAILED_ATTEMPTS_PER_EMAIL
+            identifier_failures is not None
+            and identifier_failures >= settings.AUTH_MAX_FAILED_ATTEMPTS_PER_EMAIL
         ):
-            self._redis_call("setex", keys["email_lock"], settings.AUTH_LOCKOUT_SECONDS, "1")
+            self._redis_call("setex", keys["identifier_lock"], settings.AUTH_LOCKOUT_SECONDS, "1")
 
         if (
             ip_failures is not None
@@ -142,12 +174,12 @@ class AuthService:
         ):
             self._redis_call("setex", keys["ip_lock"], settings.AUTH_LOCKOUT_SECONDS, "1")
 
-    def _clear_failed_login_state(self, email: str, client_ip: Optional[str]) -> None:
-        keys = self._auth_keys(email, client_ip)
+    def _clear_failed_login_state(self, identifier_key: str, client_ip: Optional[str]) -> None:
+        keys = self._auth_keys(identifier_key, client_ip)
         for key in (
-            keys["email_failures"],
+            keys["identifier_failures"],
             keys["ip_failures"],
-            keys["email_lock"],
+            keys["identifier_lock"],
             keys["ip_lock"],
         ):
             self._redis_call("delete", key)
@@ -191,21 +223,40 @@ class AuthService:
         """
         Authenticate user and return JWT access + Redis-backed refresh tokens.
         """
-        normalized_email = self._normalize_email(data.email)
-        self._assert_login_allowed(normalized_email, client_ip)
+        identifier_kind, normalized_identifier = self._normalize_login_identifier(data.identifier)
+        identifier_key = f"{identifier_kind}:{normalized_identifier}"
+        self._assert_login_allowed(identifier_key, client_ip)
 
-        user = self.db.execute(
-            select(User).where(User.email == normalized_email)
-        ).scalars().first()
+        user: Optional[User] = None
 
-        if not user or not verify_password(data.password, user.hashed_password):
-            self._record_failed_login(normalized_email, client_ip)
+        if identifier_kind == "email":
+            user = self.db.execute(
+                select(User).where(User.email == normalized_identifier)
+            ).scalars().first()
+            if not user or not verify_password(data.password, user.hashed_password):
+                self._record_failed_login(identifier_key, client_ip)
+                raise ValueError("Invalid email or password")
+        else:
+            phone_candidates = self._phone_candidates(data.identifier)
+            users = self.db.execute(
+                select(User).where(User.phone.in_(phone_candidates))
+            ).scalars().all()
+            for candidate in users:
+                if verify_password(data.password, candidate.hashed_password):
+                    user = candidate
+                    break
+            if not user:
+                self._record_failed_login(identifier_key, client_ip)
+                raise ValueError("Invalid email or password")
+
+        if not user:
+            self._record_failed_login(identifier_key, client_ip)
             raise ValueError("Invalid email or password")
 
         if not user.is_active:
             raise ValueError("Account is deactivated")
 
-        self._clear_failed_login_state(normalized_email, client_ip)
+        self._clear_failed_login_state(identifier_key, client_ip)
 
         # Record last login time
         user.last_login_at = datetime.now(UTC)

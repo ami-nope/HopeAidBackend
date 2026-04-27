@@ -198,6 +198,7 @@ def test_admin(db_session: Session, test_org: Organization) -> User:
         organization_id=test_org.id,
         name="Test Admin",
         email=f"admin-{uuid.uuid4().hex[:6]}@test.com",
+        phone=f"+1555{uuid.uuid4().int % 9000000 + 1000000}",
         hashed_password=hash_password("Test@1234"),
         role=UserRole.admin,
     )

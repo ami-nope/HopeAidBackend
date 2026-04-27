@@ -58,9 +58,42 @@ async def test_login_success(client, test_admin):
 
 
 @pytest.mark.asyncio
+async def test_login_success_with_identifier_key(client, test_admin):
+    resp = await client.post("/api/v1/auth/login", json={
+        "identifier": test_admin.email,
+        "password": "Test@1234",
+    })
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert "access_token" in data
+
+
+@pytest.mark.asyncio
+async def test_login_success_with_phone_identifier(client, test_admin):
+    assert test_admin.phone is not None
+    resp = await client.post("/api/v1/auth/login", json={
+        "identifier": test_admin.phone,
+        "password": "Test@1234",
+    })
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert "access_token" in data
+
+
+@pytest.mark.asyncio
 async def test_login_wrong_password(client, test_admin):
     resp = await client.post("/api/v1/auth/login", json={
         "email": test_admin.email,
+        "password": "WrongPass@1",
+    })
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_login_wrong_password_with_phone_identifier(client, test_admin):
+    assert test_admin.phone is not None
+    resp = await client.post("/api/v1/auth/login", json={
+        "identifier": test_admin.phone,
         "password": "WrongPass@1",
     })
     assert resp.status_code == 401
