@@ -189,11 +189,10 @@ def create_user_account(
     if not has_permissions(current_user.role, {required_permission}):
         raise HTTPException(403, "Insufficient permissions for this role")
 
-    is_global_super_admin = (
-        current_user.role == UserRole.super_admin and current_user.organization_id is None
-    )
+    is_super_admin = current_user.role == UserRole.super_admin
+    is_global_super_admin = is_super_admin and current_user.organization_id is None
 
-    if data.role == UserRole.admin and not is_global_super_admin:
+    if data.role == UserRole.admin and not is_super_admin:
         raise HTTPException(403, "Only DEVADMIN can create org admin accounts")
 
     target_org_id = data.organization_id or current_user.organization_id

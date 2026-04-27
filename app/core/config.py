@@ -171,6 +171,10 @@ class Settings(BaseSettings):
     # ─── Rate Limiting ────────────────────────────────────────────────────────
     RATE_LIMIT_PER_MINUTE: int = 60
     AUTH_RATE_LIMIT_PER_MINUTE: int = 10
+    AUTH_FAILURE_WINDOW_SECONDS: int = 900
+    AUTH_LOCKOUT_SECONDS: int = 900
+    AUTH_MAX_FAILED_ATTEMPTS_PER_EMAIL: int = 5
+    AUTH_MAX_FAILED_ATTEMPTS_PER_IP: int = 20
 
     # ─── Logging ──────────────────────────────────────────────────────────────
     LOG_LEVEL: str = "INFO"

@@ -14,6 +14,7 @@ import redis
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.security import (
     create_access_token,
@@ -29,6 +30,19 @@ from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse
 
 logger = get_logger(__name__)
 
+FAILED_EMAIL_PREFIX = "auth:failed:email:"
+FAILED_IP_PREFIX = "auth:failed:ip:"
+LOCK_EMAIL_PREFIX = "auth:lock:email:"
+LOCK_IP_PREFIX = "auth:lock:ip:"
+
+
+class AuthRateLimitError(ValueError):
+    """Raised when login is temporarily blocked due to repeated failures."""
+
+    def __init__(self, retry_after_seconds: int):
+        self.retry_after_seconds = max(1, int(retry_after_seconds))
+        super().__init__("Too many login attempts. Please wait and try again.")
+
 
 class AuthService:
     def __init__(self, db: Session, redis_client: redis.Redis):
@@ -36,6 +50,107 @@ class AuthService:
         # redis_client — for storing/verifying refresh tokens
         self.db = db
         self.redis = redis_client
+
+    def _redis_call(self, method_name: str, *args):
+        """Best-effort Redis call for auth guard logic."""
+        try:
+            method = getattr(self.redis, method_name)
+            return method(*args)
+        except Exception as exc:
+            logger.warning(
+                "Redis auth guard operation failed",
+                method=method_name,
+                error=str(exc),
+            )
+            return None
+
+    @staticmethod
+    def _normalize_email(email: str) -> str:
+        return email.strip().lower()
+
+    @staticmethod
+    def _normalize_client_ip(client_ip: Optional[str]) -> str:
+        return client_ip.strip() if client_ip else "unknown"
+
+    def _auth_keys(self, email: str, client_ip: Optional[str]) -> dict[str, str]:
+        safe_ip = self._normalize_client_ip(client_ip)
+        return {
+            "email_failures": f"{FAILED_EMAIL_PREFIX}{email}",
+            "ip_failures": f"{FAILED_IP_PREFIX}{safe_ip}",
+            "email_lock": f"{LOCK_EMAIL_PREFIX}{email}",
+            "ip_lock": f"{LOCK_IP_PREFIX}{safe_ip}",
+        }
+
+    def _increment_fail_counter(self, key: str, window_seconds: int) -> Optional[int]:
+        count = self._redis_call("incr", key)
+        if count is None:
+            return None
+
+        try:
+            count_int = int(count)
+        except (TypeError, ValueError):
+            return None
+
+        ttl_raw = self._redis_call("ttl", key)
+        try:
+            ttl = int(ttl_raw) if ttl_raw is not None else -1
+        except (TypeError, ValueError):
+            ttl = -1
+        if count_int == 1 or ttl < 0:
+            self._redis_call("expire", key, window_seconds)
+        return count_int
+
+    def _active_lock_ttl(self, lock_key: str) -> int:
+        ttl_raw = self._redis_call("ttl", lock_key)
+        if ttl_raw is None:
+            return 0
+        try:
+            ttl = int(ttl_raw)
+        except (TypeError, ValueError):
+            return 0
+        return ttl if ttl > 0 else 0
+
+    def _assert_login_allowed(self, email: str, client_ip: Optional[str]) -> None:
+        keys = self._auth_keys(email, client_ip)
+        email_lock_ttl = self._active_lock_ttl(keys["email_lock"])
+        ip_lock_ttl = self._active_lock_ttl(keys["ip_lock"])
+        retry_after = max(email_lock_ttl, ip_lock_ttl)
+        if retry_after > 0:
+            raise AuthRateLimitError(retry_after)
+
+    def _record_failed_login(self, email: str, client_ip: Optional[str]) -> None:
+        keys = self._auth_keys(email, client_ip)
+
+        email_failures = self._increment_fail_counter(
+            keys["email_failures"],
+            settings.AUTH_FAILURE_WINDOW_SECONDS,
+        )
+        ip_failures = self._increment_fail_counter(
+            keys["ip_failures"],
+            settings.AUTH_FAILURE_WINDOW_SECONDS,
+        )
+
+        if (
+            email_failures is not None
+            and email_failures >= settings.AUTH_MAX_FAILED_ATTEMPTS_PER_EMAIL
+        ):
+            self._redis_call("setex", keys["email_lock"], settings.AUTH_LOCKOUT_SECONDS, "1")
+
+        if (
+            ip_failures is not None
+            and ip_failures >= settings.AUTH_MAX_FAILED_ATTEMPTS_PER_IP
+        ):
+            self._redis_call("setex", keys["ip_lock"], settings.AUTH_LOCKOUT_SECONDS, "1")
+
+    def _clear_failed_login_state(self, email: str, client_ip: Optional[str]) -> None:
+        keys = self._auth_keys(email, client_ip)
+        for key in (
+            keys["email_failures"],
+            keys["ip_failures"],
+            keys["email_lock"],
+            keys["ip_lock"],
+        ):
+            self._redis_call("delete", key)
 
     def register(self, data: RegisterRequest) -> User:
         """
@@ -72,19 +187,25 @@ class AuthService:
         logger.info("User registered", user_id=str(user.id), email=user.email)
         return user
 
-    def login(self, data: LoginRequest) -> TokenResponse:
+    def login(self, data: LoginRequest, client_ip: Optional[str] = None) -> TokenResponse:
         """
         Authenticate user and return JWT access + Redis-backed refresh tokens.
         """
+        normalized_email = self._normalize_email(data.email)
+        self._assert_login_allowed(normalized_email, client_ip)
+
         user = self.db.execute(
-            select(User).where(User.email == data.email.lower())
+            select(User).where(User.email == normalized_email)
         ).scalars().first()
 
         if not user or not verify_password(data.password, user.hashed_password):
+            self._record_failed_login(normalized_email, client_ip)
             raise ValueError("Invalid email or password")
 
         if not user.is_active:
             raise ValueError("Account is deactivated")
+
+        self._clear_failed_login_state(normalized_email, client_ip)
 
         # Record last login time
         user.last_login_at = datetime.now(UTC)
@@ -99,7 +220,6 @@ class AuthService:
         # Store refresh token in Redis with 7-day TTL
         refresh_token = create_refresh_token(str(user.id), self.redis)
 
-        from app.core.config import settings
         logger.info("User logged in", user_id=str(user.id))
         return TokenResponse(
             access_token=access_token,
@@ -127,7 +247,6 @@ class AuthService:
         )
         new_refresh = create_refresh_token(str(user.id), self.redis)
 
-        from app.core.config import settings
         return TokenResponse(
             access_token=new_access,
             refresh_token=new_refresh,

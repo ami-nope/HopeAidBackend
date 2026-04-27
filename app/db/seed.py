@@ -77,6 +77,23 @@ def seed():
         db.add(org_manager)
         db.flush()   # flush to get org_manager.id
 
+        org_admin = User(
+            organization_id=org.id,
+            name="Demo Org Admin",
+            email="admin@hopeaid-demo.org",
+            hashed_password=hash_password("OrgAdmin@1234"),
+            role=UserRole.admin,
+        )
+        volunteer_user = User(
+            organization_id=org.id,
+            name="Demo Volunteer",
+            email="volunteer@hopeaid-demo.org",
+            hashed_password=hash_password("Volunteer@1234"),
+            role=UserRole.volunteer,
+        )
+        db.add_all([org_admin, volunteer_user])
+        db.flush()
+
         # ── Households ────────────────────────────────────────────────────────
         hh1 = Household(
             organization_id=org.id,
@@ -192,6 +209,22 @@ def seed():
                 reliability_score=7.8,
                 availability_status=AvailabilityStatus.available,
             ),
+            Volunteer(
+                organization_id=org.id,
+                user_id=volunteer_user.id,
+                name=volunteer_user.name,
+                phone="+91-9876543222",
+                email=volunteer_user.email,
+                current_location_name="Chennai",
+                latitude=13.0827,
+                longitude=80.2707,
+                skills=["community_outreach", "distribution"],
+                languages=["en", "ta"],
+                has_transport=False,
+                duty_type=DutyType.on_call,
+                reliability_score=6.5,
+                availability_status=AvailabilityStatus.available,
+            ),
         ])
 
         # ── Inventory ─────────────────────────────────────────────────────────
@@ -230,7 +263,9 @@ def seed():
         print()
         print("Demo credentials:")
         print("  Super Admin : admin@hopeaid.platform   / Admin@1234")
+        print("  Org Admin   : admin@hopeaid-demo.org   / OrgAdmin@1234")
         print("  Org Manager : manager@hopeaid-demo.org / Manager@1234")
+        print("  Volunteer   : volunteer@hopeaid-demo.org / Volunteer@1234")
 
     except Exception as e:
         db.rollback()

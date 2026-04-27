@@ -1,6 +1,6 @@
 """app/api/v1/routes/auth.py — Authentication endpoints. All sync."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.api.v1.deps import get_current_user
@@ -17,7 +17,7 @@ from app.schemas.auth import (
     UserOut,
 )
 from app.schemas.common import APIResponse, MessageResponse
-from app.services.auth_service import AuthService
+from app.services.auth_service import AuthRateLimitError, AuthService
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -43,10 +43,9 @@ def register(
     if not has_permissions(current_user.role, {required_permission}):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
 
-    is_global_super_admin = (
-        current_user.role == UserRole.super_admin and current_user.organization_id is None
-    )
-    if data.role == UserRole.admin and not is_global_super_admin:
+    is_super_admin = current_user.role == UserRole.super_admin
+    is_global_super_admin = is_super_admin and current_user.organization_id is None
+    if data.role == UserRole.admin and not is_super_admin:
         raise HTTPException(status_code=403, detail="Only DEVADMIN can create org admin accounts")
     if not is_global_super_admin and data.organization_id != current_user.organization_id:
         raise HTTPException(status_code=403, detail="Cannot create users for another organization")
@@ -63,6 +62,7 @@ def register(
 
 @router.post("/login", response_model=APIResponse[TokenResponse])
 def login(
+    request: Request,
     data: LoginRequest,
     db: Session = Depends(get_db),
     redis=Depends(get_redis),
@@ -70,9 +70,16 @@ def login(
     """Authenticate and receive JWT access + refresh tokens."""
     try:
         service = AuthService(db, redis)
-        tokens = service.login(data)
+        client_ip = request.client.host if request.client else None
+        tokens = service.login(data, client_ip=client_ip)
         db.commit()
         return {"success": True, "data": tokens}
+    except AuthRateLimitError as e:
+        raise HTTPException(
+            status_code=429,
+            detail=str(e),
+            headers={"Retry-After": str(e.retry_after_seconds)},
+        )
     except ValueError as e:
         raise HTTPException(status_code=401, detail=str(e))
 
