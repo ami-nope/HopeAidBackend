@@ -7,7 +7,6 @@ Synchronous — no async, no await. Redis and DB calls are all sync.
 """
 
 import uuid
-import re
 from datetime import UTC, datetime
 from typing import Optional
 
@@ -28,6 +27,7 @@ from app.core.security import (
 from app.models.organization import Organization
 from app.models.user import User
 from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse
+from app.utils.phone import normalize_phone
 
 logger = get_logger(__name__)
 
@@ -71,7 +71,8 @@ class AuthService:
 
     @staticmethod
     def _normalize_phone(phone: str) -> str:
-        return re.sub(r"\D", "", phone)
+        normalized = normalize_phone(phone)
+        return normalized[1:] if normalized else ""
 
     @classmethod
     def _is_email_identifier(cls, identifier: str) -> bool:
@@ -204,11 +205,21 @@ class AuthService:
         if existing:
             raise ValueError("Email already registered")
 
+        normalized_phone = normalize_phone(data.phone)
+        if data.phone and not normalized_phone:
+            raise ValueError("Invalid phone number")
+        if normalized_phone:
+            existing_phone = self.db.execute(
+                select(User).where(User.phone == normalized_phone)
+            ).scalars().first()
+            if existing_phone:
+                raise ValueError("Phone already registered")
+
         user = User(
             organization_id=data.organization_id,
             name=data.name,
             email=data.email.lower(),
-            phone=data.phone,
+            phone=normalized_phone,
             hashed_password=hash_password(data.password),
             role=data.role,
             is_active=True,

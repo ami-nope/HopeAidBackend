@@ -20,6 +20,7 @@ from app.schemas.admin import AdminUserCreate
 from app.schemas.audit_log import AuditLogOut
 from app.schemas.auth import UserOut
 from app.schemas.common import APIResponse, PaginatedResponse
+from app.utils.phone import normalize_phone
 from app.utils.pagination import PaginationParams, build_pagination_meta, get_pagination
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -206,11 +207,29 @@ def create_user_account(
     if not org:
         raise HTTPException(404, "Organization not found")
 
-    existing = db.execute(
-        select(User).where(User.email == data.email.lower())
+    normalized_phone = normalize_phone(data.phone)
+    if data.phone and not normalized_phone:
+        raise HTTPException(400, "Invalid phone number")
+
+    normalized_email = data.email.lower() if data.email else None
+    if normalized_email is None:
+        if not normalized_phone:
+            raise HTTPException(400, "Either email or phone is required")
+        # Keep DB compatibility (email column is non-null) for phone-first logins.
+        normalized_email = f"phone_{normalized_phone[1:]}@phone.hopeaid.local"
+
+    existing_email = db.execute(
+        select(User).where(User.email == normalized_email)
     ).scalars().first()
-    if existing:
+    if existing_email:
         raise HTTPException(400, "Email already registered")
+
+    if normalized_phone:
+        existing_phone = db.execute(
+            select(User).where(User.phone == normalized_phone)
+        ).scalars().first()
+        if existing_phone:
+            raise HTTPException(400, "Phone already registered")
 
     display_name = data.name
     if data.role == UserRole.admin and not display_name:
@@ -221,8 +240,8 @@ def create_user_account(
     user = User(
         organization_id=target_org_id,
         name=display_name,
-        email=data.email.lower(),
-        phone=data.phone,
+        email=normalized_email,
+        phone=normalized_phone,
         hashed_password=hash_password(data.password),
         role=data.role,
         is_active=True,

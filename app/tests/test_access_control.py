@@ -165,3 +165,21 @@ async def test_org_manager_can_create_volunteer_account(client, db_session, test
     assert resp.status_code == 201
     data = resp.json()["data"]
     assert data["role"] == "volunteer"
+
+
+@pytest.mark.asyncio
+async def test_admin_can_create_phone_only_account(client, admin_headers, test_org):
+    payload = {
+        "organization_id": str(test_org.id),
+        "name": "Phone Volunteer",
+        "identifier": "+1 (555) 234-9876",
+        "password": "Test@1234",
+        "role": "volunteer",
+        "create_volunteer_profile": True,
+    }
+    resp = await client.post("/api/v1/admin/users", headers=admin_headers, json=payload)
+    assert resp.status_code == 201
+    data = resp.json()["data"]
+    assert data["role"] == "volunteer"
+    assert data["phone"] == "+15552349876"
+    assert data["email"].startswith("phone_15552349876@")
