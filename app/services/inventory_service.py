@@ -14,7 +14,7 @@ from typing import Optional
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.core.constants import InventoryStatus, MovementType
+from app.core.constants import InventoryStatus, MovementType, UserRole
 from app.core.logging import get_logger
 from app.models.inventory import InventoryItem, StockMovement
 from app.models.user import User
@@ -46,6 +46,9 @@ class InventoryService:
         self.db = db
         self.current_user = current_user
         self.org_id = current_user.organization_id
+        self.is_global_super_admin = (
+            current_user.role == UserRole.super_admin and current_user.organization_id is None
+        )
 
     def create_item(self, data: InventoryItemCreate) -> InventoryItem:
         """Create a new inventory item and record initial stock movement."""
@@ -85,16 +88,16 @@ class InventoryService:
 
     def get_item(self, item_id: uuid.UUID) -> Optional[InventoryItem]:
         """Fetch one item scoped to this organization."""
-        return self.db.execute(
-            select(InventoryItem).where(
-                InventoryItem.id == item_id,
-                InventoryItem.organization_id == self.org_id,
-            )
-        ).scalars().first()
+        query = select(InventoryItem).where(InventoryItem.id == item_id)
+        if not self.is_global_super_admin:
+            query = query.where(InventoryItem.organization_id == self.org_id)
+        return self.db.execute(query).scalars().first()
 
     def list_items(self, offset: int = 0, limit: int = 20) -> tuple[list, int]:
         """List all items for this org, returns (rows, total_count)."""
-        q = select(InventoryItem).where(InventoryItem.organization_id == self.org_id)
+        q = select(InventoryItem)
+        if not self.is_global_super_admin:
+            q = q.where(InventoryItem.organization_id == self.org_id)
         total = self.db.execute(select(func.count()).select_from(q.subquery())).scalar()
         items = self.db.execute(q.offset(offset).limit(limit)).scalars().all()
         return items, total

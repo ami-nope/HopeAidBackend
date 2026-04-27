@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.v1.deps import get_current_user, require_roles
+from app.api.v1.deps import get_current_user, require_permissions
 from app.core.constants import AssignmentStatus, UserRole
 from app.db.session import get_db
 from app.models.user import User
@@ -21,7 +21,7 @@ router = APIRouter(prefix="/allocation", tags=["Allocation"])
 def recommend_volunteers(
     case_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permissions("cases:view")),
 ):
     """
     Score and rank available volunteers for a given case.
@@ -41,9 +41,7 @@ def confirm_allocation(
     volunteer_id: UUID,
     notes: str = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(
-        UserRole.admin, UserRole.org_manager, UserRole.field_coordinator, UserRole.super_admin
-    )),
+    current_user: User = Depends(require_permissions("cases:assign")),
 ):
     """
     Confirm a volunteer recommendation — creates a real Assignment record.
@@ -53,16 +51,22 @@ def confirm_allocation(
     from app.core.constants import CaseStatus
     from app.models.volunteer import Volunteer
 
+    is_global_super_admin = (
+        current_user.role == UserRole.super_admin and current_user.organization_id is None
+    )
+
     case = db.get(Case, case_id)
-    if not case or case.organization_id != current_user.organization_id:
+    if not case:
+        raise HTTPException(404, "Case not found")
+    if not is_global_super_admin and case.organization_id != current_user.organization_id:
         raise HTTPException(404, "Case not found")
 
-    vol = db.execute(
-        select(Volunteer).where(
-            Volunteer.id == volunteer_id,
-            Volunteer.organization_id == current_user.organization_id,
-        )
-    ).scalars().first()
+    vol_query = select(Volunteer).where(Volunteer.id == volunteer_id)
+    if not is_global_super_admin:
+        vol_query = vol_query.where(Volunteer.organization_id == current_user.organization_id)
+    else:
+        vol_query = vol_query.where(Volunteer.organization_id == case.organization_id)
+    vol = db.execute(vol_query).scalars().first()
     if not vol:
         raise HTTPException(404, "Volunteer not found")
 
@@ -73,7 +77,7 @@ def confirm_allocation(
         case_id=case_id,
         volunteer_id=volunteer_id,
         assigned_by_user_id=current_user.id,
-        organization_id=current_user.organization_id,
+        organization_id=case.organization_id,
         status=AssignmentStatus.pending,
         allocation_score=breakdown["total"],
         reasoning=breakdown,
@@ -90,7 +94,7 @@ def confirm_allocation(
 def conflict_check(
     case_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permissions("cases:view")),
 ):
     """Check for inventory shortages and other operational conflicts for a case."""
     try:
@@ -104,28 +108,31 @@ def conflict_check(
 @router.post("/resource-optimization", response_model=APIResponse[dict])
 def resource_optimization(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permissions("reports:view")),
 ):
     """Overview of resource allocation efficiency: unassigned urgent cases vs idle volunteers."""
     from app.models.case import Case
     from app.models.volunteer import Volunteer
     from app.core.constants import CaseStatus, UrgencyLevel, AvailabilityStatus
 
-    unassigned_count = db.execute(
-        select(func.count(Case.id)).where(
-            Case.organization_id == current_user.organization_id,
-            Case.status.in_([CaseStatus.new, CaseStatus.verified]),
-            Case.urgency_level.in_([UrgencyLevel.critical, UrgencyLevel.high]),
-        )
-    ).scalar()
+    is_global_super_admin = (
+        current_user.role == UserRole.super_admin and current_user.organization_id is None
+    )
+    case_query = select(func.count(Case.id)).where(
+        Case.status.in_([CaseStatus.new, CaseStatus.verified]),
+        Case.urgency_level.in_([UrgencyLevel.critical, UrgencyLevel.high]),
+    )
+    if not is_global_super_admin:
+        case_query = case_query.where(Case.organization_id == current_user.organization_id)
+    unassigned_count = db.execute(case_query).scalar()
 
-    idle_count = db.execute(
-        select(func.count(Volunteer.id)).where(
-            Volunteer.organization_id == current_user.organization_id,
-            Volunteer.availability_status == AvailabilityStatus.available,
-            Volunteer.active_assignment_count == 0,
-        )
-    ).scalar()
+    volunteer_query = select(func.count(Volunteer.id)).where(
+        Volunteer.availability_status == AvailabilityStatus.available,
+        Volunteer.active_assignment_count == 0,
+    )
+    if not is_global_super_admin:
+        volunteer_query = volunteer_query.where(Volunteer.organization_id == current_user.organization_id)
+    idle_count = db.execute(volunteer_query).scalar()
 
     return {
         "success": True,

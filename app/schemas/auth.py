@@ -56,3 +56,5 @@ class UserOut(HopeAidBase):
 class MeResponse(HopeAidBase):
     user: UserOut
     organization_name: Optional[str] = None
+    role_label: Optional[str] = None
+    permissions: list[str] = []

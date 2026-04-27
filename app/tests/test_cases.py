@@ -41,6 +41,38 @@ async def test_list_cases(client, admin_headers):
 
 
 @pytest.mark.asyncio
+async def test_list_cases_with_search_query(client, admin_headers):
+    create_resp = await client.post("/api/v1/cases", headers=admin_headers, json={
+        "title": "Medical support needed in Sector 7",
+        "category": "medical",
+        "urgency_level": "high",
+        "location_name": "Sector 7",
+    })
+    assert create_resp.status_code == 201
+
+    resp = await client.get("/api/v1/cases?q=Sector%207", headers=admin_headers)
+    assert resp.status_code == 200
+
+    titles = [item["title"] for item in resp.json()["data"]]
+    assert "Medical support needed in Sector 7" in titles
+
+
+@pytest.mark.asyncio
+async def test_super_admin_can_list_cases_across_orgs(client, super_admin_headers, admin_headers):
+    create_resp = await client.post("/api/v1/cases", headers=admin_headers, json={
+        "title": "Cross-org visible case",
+        "category": "food",
+        "urgency_level": "medium",
+    })
+    assert create_resp.status_code == 201
+
+    resp = await client.get("/api/v1/cases", headers=super_admin_headers)
+    assert resp.status_code == 200
+    titles = [item["title"] for item in resp.json()["data"]]
+    assert "Cross-org visible case" in titles
+
+
+@pytest.mark.asyncio
 async def test_approve_case(client, admin_headers):
     # Create a case first
     create_resp = await client.post("/api/v1/cases", headers=admin_headers, json={

@@ -24,7 +24,7 @@ from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.logging import get_logger, setup_logging
 from app.db.base import Base
-from app.db.session import engine
+from app.db.session import engine, get_redis
 
 # Set up structured logging immediately when the module loads
 setup_logging()
@@ -95,7 +95,7 @@ def create_app() -> FastAPI:
     # ── Startup event ────────────────────────────────────────────────────────
     @app.on_event("startup")
     def on_startup():
-        """Verify DB connectivity and ensure tables exist on startup."""
+        """Verify external dependencies and ensure tables exist on startup."""
         logger.info(
             "HopeAid backend starting",
             version=settings.APP_VERSION,
@@ -108,10 +108,13 @@ def create_app() -> FastAPI:
             with engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
 
+            # Auth refresh tokens depend on Redis; fail startup if it is unavailable.
+            get_redis().ping()
+
             _create_tables_once()
-            logger.info("Database connection verified and tables ensured")
+            logger.info("Database and Redis connections verified; tables ensured")
         except Exception as e:
-            logger.error("Database connection failed at startup", error=str(e))
+            logger.error("Dependency connection failed at startup", error=str(e))
             raise
 
     @app.on_event("shutdown")

@@ -6,7 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.v1.deps import get_current_user
+from app.core.constants import UserRole
+from app.api.v1.deps import require_permissions
 from app.db.session import get_db
 from app.models.household import Household
 from app.models.person import Person
@@ -26,17 +27,21 @@ router = APIRouter(tags=["Households & People"])
 def create_household(
     data: HouseholdCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permissions("households:manage")),
 ):
+    org_id = current_user.organization_id
+    if org_id is None:
+        raise HTTPException(400, "organization_id is required")
+
     hh = Household(
-        organization_id=current_user.organization_id,
+        organization_id=org_id,
         created_by_user_id=current_user.id,
         **data.model_dump(),
     )
     db.add(hh)
     db.flush()
     log_action(
-        db, current_user.organization_id, current_user.id,
+        db, org_id, current_user.id,
         "HOUSEHOLD_CREATED", "household", hh.id,
         after_json={"name": hh.household_name},
     )
@@ -51,9 +56,11 @@ def create_household(
 def list_households(
     pagination: PaginationParams = Depends(get_pagination),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permissions("households:view")),
 ):
-    q = select(Household).where(Household.organization_id == current_user.organization_id)
+    q = select(Household)
+    if not (current_user.role == UserRole.super_admin and current_user.organization_id is None):
+        q = q.where(Household.organization_id == current_user.organization_id)
     total = db.execute(select(func.count()).select_from(q.subquery())).scalar()
     households = db.execute(q.offset(pagination.offset).limit(pagination.page_size)).scalars().all()
     return {
@@ -67,14 +74,12 @@ def list_households(
 def get_household(
     household_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permissions("households:view")),
 ):
-    hh = db.execute(
-        select(Household).where(
-            Household.id == household_id,
-            Household.organization_id == current_user.organization_id,
-        )
-    ).scalars().first()
+    q = select(Household).where(Household.id == household_id)
+    if not (current_user.role == UserRole.super_admin and current_user.organization_id is None):
+        q = q.where(Household.organization_id == current_user.organization_id)
+    hh = db.execute(q).scalars().first()
     if not hh:
         raise HTTPException(404, "Household not found")
 
@@ -92,14 +97,12 @@ def update_household(
     household_id: UUID,
     data: HouseholdUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permissions("households:manage")),
 ):
-    hh = db.execute(
-        select(Household).where(
-            Household.id == household_id,
-            Household.organization_id == current_user.organization_id,
-        )
-    ).scalars().first()
+    q = select(Household).where(Household.id == household_id)
+    if not (current_user.role == UserRole.super_admin and current_user.organization_id is None):
+        q = q.where(Household.organization_id == current_user.organization_id)
+    hh = db.execute(q).scalars().first()
     if not hh:
         raise HTTPException(404, "Household not found")
 
@@ -117,15 +120,20 @@ def update_household(
 def create_person(
     data: PersonCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permissions("households:manage")),
 ):
     # Ensure household belongs to this org
     hh = db.get(Household, data.household_id)
-    if not hh or hh.organization_id != current_user.organization_id:
+    if not hh:
+        raise HTTPException(404, "Household not found in your organization")
+    if (
+        not (current_user.role == UserRole.super_admin and current_user.organization_id is None)
+        and hh.organization_id != current_user.organization_id
+    ):
         raise HTTPException(404, "Household not found in your organization")
 
     person = Person(
-        organization_id=current_user.organization_id,
+        organization_id=hh.organization_id,
         **data.model_dump(),
     )
     db.add(person)
@@ -139,14 +147,12 @@ def update_person(
     person_id: UUID,
     data: PersonUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permissions("households:manage")),
 ):
-    person = db.execute(
-        select(Person).where(
-            Person.id == person_id,
-            Person.organization_id == current_user.organization_id,
-        )
-    ).scalars().first()
+    q = select(Person).where(Person.id == person_id)
+    if not (current_user.role == UserRole.super_admin and current_user.organization_id is None):
+        q = q.where(Person.organization_id == current_user.organization_id)
+    person = db.execute(q).scalars().first()
     if not person:
         raise HTTPException(404, "Person not found")
 

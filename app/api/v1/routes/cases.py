@@ -4,10 +4,11 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.v1.deps import get_current_user, require_roles
-from app.core.constants import APPROVERS, CaseStatus, UserRole
+from app.api.v1.deps import require_permissions
+from app.core.constants import CaseStatus
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.case import (
@@ -29,7 +30,7 @@ router = APIRouter(prefix="/cases", tags=["Cases"])
 def create_case(
     data: CaseCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permissions("cases:create")),
 ):
     """Create a new aid case. Risk score is auto-computed."""
     try:
@@ -46,18 +47,50 @@ def create_case(
 def list_cases(
     status: Optional[CaseStatus] = Query(None),
     urgency: Optional[str] = Query(None),
+    q: Optional[str] = Query(None, min_length=1),
     pagination: PaginationParams = Depends(get_pagination),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permissions("cases:view")),
 ):
     """List cases for the current user's organization with optional filters."""
     service = CaseService(db, current_user)
     cases, total = service.list_cases(
         status=status,
         urgency=urgency,
+        q=q,
         offset=pagination.offset,
         limit=pagination.page_size,
     )
+    return {
+        "success": True,
+        "data": [CaseOut.model_validate(c) for c in cases],
+        "meta": build_pagination_meta(total, pagination.page, pagination.page_size),
+    }
+
+
+@router.get("/assigned/me", response_model=PaginatedResponse[CaseOut])
+def list_my_assigned_cases(
+    pagination: PaginationParams = Depends(get_pagination),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permissions("cases:view")),
+):
+    from app.core.constants import UserRole
+    from app.models.assignment import Assignment
+    from app.models.volunteer import Volunteer
+
+    query = (
+        select(Case)
+        .join(Assignment, Assignment.case_id == Case.id)
+        .join(Volunteer, Volunteer.id == Assignment.volunteer_id)
+        .where(Volunteer.user_id == current_user.id)
+    )
+    if not (current_user.role == UserRole.super_admin and current_user.organization_id is None):
+        query = query.where(Case.organization_id == current_user.organization_id)
+
+    total = db.execute(select(func.count()).select_from(query.subquery())).scalar()
+    cases = db.execute(
+        query.order_by(Case.created_at.desc()).offset(pagination.offset).limit(pagination.page_size)
+    ).scalars().all()
     return {
         "success": True,
         "data": [CaseOut.model_validate(c) for c in cases],
@@ -69,7 +102,7 @@ def list_cases(
 def get_case(
     case_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permissions("cases:view")),
 ):
     service = CaseService(db, current_user)
     case = service.get_case(case_id)
@@ -83,7 +116,7 @@ def update_case(
     case_id: UUID,
     data: CaseUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permissions("cases:update")),
 ):
     try:
         service = CaseService(db, current_user)
@@ -99,7 +132,7 @@ def update_case(
 def delete_case(
     case_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.super_admin, UserRole.admin, UserRole.org_manager)),
+    current_user: User = Depends(require_permissions("cases:delete")),
 ):
     """Soft-delete: sets case status to rejected."""
     service = CaseService(db, current_user)
@@ -115,7 +148,7 @@ def delete_case(
 def approve_case(
     case_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(*APPROVERS)),
+    current_user: User = Depends(require_permissions("cases:approve")),
 ):
     """Approve (verify) a case. Requires reviewer, org_manager, admin, or super_admin."""
     try:
@@ -133,7 +166,7 @@ def reject_case(
     case_id: UUID,
     request: CaseRejectRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(*APPROVERS)),
+    current_user: User = Depends(require_permissions("cases:approve")),
 ):
     """Reject a case with a reason."""
     try:
@@ -150,7 +183,7 @@ def reject_case(
 def close_case(
     case_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(*APPROVERS)),
+    current_user: User = Depends(require_permissions("cases:close")),
 ):
     """Close a case that is in_progress, assigned, or resolved."""
     try:
@@ -168,9 +201,7 @@ def assign_volunteer(
     case_id: UUID,
     request: CaseAssignRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(
-        UserRole.admin, UserRole.org_manager, UserRole.field_coordinator, UserRole.super_admin
-    )),
+    current_user: User = Depends(require_permissions("cases:assign")),
 ):
     """Directly assign a volunteer to a case."""
     from app.models.assignment import Assignment
@@ -185,7 +216,7 @@ def assign_volunteer(
         case_id=case.id,
         volunteer_id=request.volunteer_id,
         assigned_by_user_id=current_user.id,
-        organization_id=current_user.organization_id,
+        organization_id=case.organization_id,
         status=AssignmentStatus.pending,
         notes=request.notes,
     )
@@ -199,7 +230,7 @@ def assign_volunteer(
 def recalculate_risk(
     case_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permissions("cases:update")),
 ):
     """Recompute risk score including vulnerability data from linked persons."""
     try:
@@ -216,7 +247,7 @@ def recalculate_risk(
 def check_duplicate(
     case_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permissions("cases:view")),
 ):
     """Run fuzzy duplicate detection for this case against recent org cases."""
     try:

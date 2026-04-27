@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.v1.deps import get_current_user
+from app.core.constants import UserRole
+from app.core.permissions import has_permissions, list_permissions_for_role, role_label
 from app.db.session import get_db, get_redis
 from app.models.user import User
 from app.schemas.auth import (
@@ -25,8 +27,30 @@ def register(
     data: RegisterRequest,
     db: Session = Depends(get_db),
     redis=Depends(get_redis),
+    current_user: User = Depends(get_current_user),
 ):
     """Register a new user account within an organization."""
+    role_permission_map = {
+        UserRole.admin: "users:create_org_admin",
+        UserRole.org_manager: "users:create_org_manager",
+        UserRole.volunteer: "users:create_volunteer",
+        UserRole.field_coordinator: "users:create_volunteer",
+        UserRole.reviewer: "users:create_volunteer",
+    }
+    required_permission = role_permission_map.get(data.role)
+    if not required_permission:
+        raise HTTPException(status_code=400, detail="Unsupported role")
+    if not has_permissions(current_user.role, {required_permission}):
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+
+    is_global_super_admin = (
+        current_user.role == UserRole.super_admin and current_user.organization_id is None
+    )
+    if data.role == UserRole.admin and not is_global_super_admin:
+        raise HTTPException(status_code=403, detail="Only DEVADMIN can create org admin accounts")
+    if not is_global_super_admin and data.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=403, detail="Cannot create users for another organization")
+
     try:
         service = AuthService(db, redis)
         user = service.register(data)
@@ -99,5 +123,7 @@ def get_me(
         "data": MeResponse(
             user=UserOut.model_validate(current_user),
             organization_name=org_name,
+            role_label=role_label(current_user.role),
+            permissions=sorted(list_permissions_for_role(current_user.role)),
         ),
     }

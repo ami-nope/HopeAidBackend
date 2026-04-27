@@ -11,6 +11,7 @@ from app.schemas.common import HopeAidBase
 
 
 class VolunteerCreate(HopeAidBase):
+    organization_id: Optional[UUID] = None
     name: str = Field(..., min_length=2, max_length=255)
     phone: Optional[str] = Field(None, max_length=30)
     email: Optional[EmailStr] = None

@@ -6,6 +6,7 @@ Defaults are safe for local development only.
 """
 
 import json
+import socket
 from functools import lru_cache
 from typing import Annotated, List, Optional
 
@@ -20,6 +21,30 @@ _ASYNC_TO_SYNC_DRIVERS = {
     "postgres://": "postgresql+psycopg2://",
     "postgresql://": "postgresql+psycopg2://",
 }
+
+
+def _get_local_ipv4_addresses() -> List[str]:
+    """Best-effort discovery of non-loopback IPv4 addresses for local dev."""
+    addresses: set[str] = set()
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))
+            detected_ip = sock.getsockname()[0]
+            if detected_ip and not detected_ip.startswith("127."):
+                addresses.add(detected_ip)
+    except OSError:
+        pass
+
+    try:
+        for result in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            detected_ip = result[4][0]
+            if detected_ip and not detected_ip.startswith("127."):
+                addresses.add(detected_ip)
+    except socket.gaierror:
+        pass
+
+    return sorted(addresses)
 
 
 class Settings(BaseSettings):
@@ -114,8 +139,16 @@ class Settings(BaseSettings):
 
     @property
     def cors_origins(self) -> List[str]:
-        """Return normalized CORS origins."""
-        return self.CORS_ORIGINS
+        """Return normalized CORS origins, plus local LAN origins in dev."""
+        origins = list(dict.fromkeys(self.CORS_ORIGINS))
+
+        if not self.is_development:
+            return origins
+
+        for ip_address in _get_local_ipv4_addresses():
+            origins.append(f"http://{ip_address}:3000")
+
+        return list(dict.fromkeys(origins))
 
     # ─── Storage (S3-compatible) ───────────────────────────────────────────────
     S3_ENDPOINT_URL: Optional[str] = None

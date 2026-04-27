@@ -25,6 +25,7 @@ class ResourceNeededItem(HopeAidBase):
 
 
 class CaseCreate(HopeAidBase):
+    organization_id: Optional[UUID] = None
     household_id: Optional[UUID] = None
     title: str = Field(..., min_length=3, max_length=500)
     description: Optional[str] = None

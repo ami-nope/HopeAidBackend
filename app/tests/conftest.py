@@ -123,6 +123,21 @@ async def test_admin(db_session: AsyncSession, test_org: Organization) -> User:
 
 
 @pytest_asyncio.fixture
+async def test_super_admin(db_session: AsyncSession) -> User:
+    user = User(
+        organization_id=None,
+        name="Test Super Admin",
+        email=f"super-{uuid.uuid4().hex[:6]}@test.com",
+        hashed_password=hash_password("Test@1234"),
+        role=UserRole.super_admin,
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+    return user
+
+
+@pytest_asyncio.fixture
 async def test_volunteer_user(db_session: AsyncSession, test_org: Organization) -> User:
     user = User(
         organization_id=test_org.id,
@@ -151,3 +166,18 @@ async def admin_token(client: AsyncClient, test_org: Organization, test_admin: U
 @pytest_asyncio.fixture
 def admin_headers(admin_token: str) -> dict:
     return {"Authorization": f"Bearer {admin_token}"}
+
+
+@pytest_asyncio.fixture
+async def super_admin_token(client: AsyncClient, test_super_admin: User) -> str:
+    resp = await client.post("/api/v1/auth/login", json={
+        "email": test_super_admin.email,
+        "password": "Test@1234",
+    })
+    assert resp.status_code == 200
+    return resp.json()["data"]["access_token"]
+
+
+@pytest_asyncio.fixture
+def super_admin_headers(super_admin_token: str) -> dict:
+    return {"Authorization": f"Bearer {super_admin_token}"}

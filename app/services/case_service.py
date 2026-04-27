@@ -14,10 +14,10 @@ import uuid
 from datetime import UTC, datetime
 from typing import Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.core.constants import CaseStatus, VerificationStatus
+from app.core.constants import CaseStatus, UserRole, VerificationStatus
 from app.core.logging import get_logger
 from app.models.case import Case
 from app.models.person import Person
@@ -45,11 +45,20 @@ class CaseService:
         self.db = db
         self.current_user = current_user
         self.org_id = current_user.organization_id
+        self.is_global_super_admin = (
+            current_user.role == UserRole.super_admin and current_user.organization_id is None
+        )
 
     def create_case(self, data: CaseCreate) -> Case:
         """Create a new case with computed risk score and auto case number."""
         from app.models.organization import Organization
-        org = self.db.get(Organization, self.org_id)
+        org_id = self.org_id
+        if self.is_global_super_admin and data.organization_id:
+            org_id = data.organization_id
+        if org_id is None:
+            raise ValueError("organization_id is required for global super admin")
+
+        org = self.db.get(Organization, org_id)
         if not org:
             raise ValueError("Organization not found")
 
@@ -65,7 +74,7 @@ class CaseService:
         )
 
         case = Case(
-            organization_id=self.org_id,
+            organization_id=org_id,
             household_id=data.household_id,
             reporter_user_id=self.current_user.id,
             ai_extraction_id=data.ai_extraction_id,
@@ -93,7 +102,7 @@ class CaseService:
 
         log_action(
             self.db,
-            organization_id=self.org_id,
+            organization_id=org_id,
             actor_user_id=self.current_user.id,
             action_type="CASE_CREATED",
             entity_type="case",
@@ -105,23 +114,35 @@ class CaseService:
 
     def get_case(self, case_id: uuid.UUID) -> Optional[Case]:
         """Fetch a single case by ID, scoped to organization."""
-        return self.db.execute(
-            select(Case).where(Case.id == case_id, Case.organization_id == self.org_id)
-        ).scalars().first()
+        query = select(Case).where(Case.id == case_id)
+        if not self.is_global_super_admin:
+            query = query.where(Case.organization_id == self.org_id)
+        return self.db.execute(query).scalars().first()
 
     def list_cases(
         self,
         status: Optional[CaseStatus] = None,
         urgency: Optional[str] = None,
+        q: Optional[str] = None,
         offset: int = 0,
         limit: int = 20,
     ) -> tuple[list[Case], int]:
         """List cases with optional filters, returns (rows, total_count)."""
-        query = select(Case).where(Case.organization_id == self.org_id)
+        query = select(Case)
+        if not self.is_global_super_admin:
+            query = query.where(Case.organization_id == self.org_id)
         if status:
             query = query.where(Case.status == status)
         if urgency:
             query = query.where(Case.urgency_level == urgency)
+        if q:
+            pattern = f"%{q.strip()}%"
+            query = query.where(or_(
+                Case.case_number.ilike(pattern),
+                Case.title.ilike(pattern),
+                Case.description.ilike(pattern),
+                Case.location_name.ilike(pattern),
+            ))
 
         total = self.db.execute(
             select(func.count()).select_from(query.subquery())

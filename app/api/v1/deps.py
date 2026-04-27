@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.core.constants import UserRole
 from app.core.logging import get_logger
+from app.core.permissions import has_permissions
 from app.core.security import decode_access_token
 from app.db.session import get_db
 from app.models.user import User
@@ -82,6 +83,23 @@ def require_roles(*roles: UserRole):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Access denied. Required roles: {[r.value for r in allowed]}",
+            )
+        return current_user
+
+    return _check
+
+
+def require_permissions(*permissions: str):
+    """
+    FastAPI dependency factory for permission-based access control.
+    """
+    required_permissions: Set[str] = set(permissions)
+
+    def _check(current_user: User = Depends(get_current_user)) -> User:
+        if not has_permissions(current_user.role, required_permissions):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied. Required permissions: {sorted(required_permissions)}",
             )
         return current_user
 

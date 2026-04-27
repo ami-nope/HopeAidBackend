@@ -5,8 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.api.v1.deps import get_current_user, require_roles
-from app.core.constants import UserRole
+from app.api.v1.deps import require_permissions
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.common import APIResponse, PaginatedResponse
@@ -27,9 +26,7 @@ router = APIRouter(prefix="/inventory", tags=["Inventory"])
 def create_item(
     data: InventoryItemCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(
-        UserRole.admin, UserRole.org_manager, UserRole.field_coordinator, UserRole.super_admin
-    )),
+    current_user: User = Depends(require_permissions("inventory:manage")),
 ):
     service = InventoryService(db, current_user)
     item = service.create_item(data)
@@ -42,7 +39,7 @@ def create_item(
 def list_items(
     pagination: PaginationParams = Depends(get_pagination),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permissions("inventory:view")),
 ):
     service = InventoryService(db, current_user)
     items, total = service.list_items(pagination.offset, pagination.page_size)
@@ -58,7 +55,7 @@ def update_item(
     item_id: UUID,
     data: InventoryItemUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permissions("inventory:manage")),
 ):
     try:
         service = InventoryService(db, current_user)
@@ -75,7 +72,7 @@ def adjust_stock(
     item_id: UUID,
     request: InventoryAdjustRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permissions("inventory:manage")),
 ):
     """Adjust inventory quantity. Use negative quantity_change to reduce stock."""
     try:
@@ -92,7 +89,7 @@ def adjust_stock(
 def distribute_inventory(
     request: InventoryDistributeRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permissions("inventory:manage")),
 ):
     """Distribute inventory to a case. Validates sufficient stock exists."""
     try:

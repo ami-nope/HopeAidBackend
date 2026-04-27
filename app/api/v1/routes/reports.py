@@ -10,7 +10,8 @@ from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.v1.deps import get_current_user
+from app.api.v1.deps import require_permissions
+from app.core.constants import UserRole
 from app.db.session import get_db
 from app.models.alert import Alert
 from app.models.case import Case
@@ -24,50 +25,63 @@ from app.schemas.report import DashboardSummary
 router = APIRouter(tags=["Reports & Exports"])
 
 
+def _apply_org_scope(query, model, current_user: User):
+    if current_user.role == UserRole.super_admin and current_user.organization_id is None:
+        return query
+    return query.where(model.organization_id == current_user.organization_id)
+
+
 @router.get("/dashboard/summary", response_model=APIResponse[DashboardSummary])
 def get_dashboard_summary(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permissions("reports:view")),
 ):
     """Organization dashboard summary metrics."""
     from app.core.constants import CaseStatus, UrgencyLevel, AvailabilityStatus, AlertStatus, InventoryStatus
 
-    org_id = current_user.organization_id
-
-    total_cases = db.execute(select(func.count(Case.id)).where(Case.organization_id == org_id)).scalar()
-    open_cases = db.execute(select(func.count(Case.id)).where(
-        Case.organization_id == org_id,
+    total_cases = db.execute(
+        _apply_org_scope(select(func.count(Case.id)), Case, current_user)
+    ).scalar()
+    open_cases = db.execute(_apply_org_scope(select(func.count(Case.id)).where(
         Case.status.in_([CaseStatus.new, CaseStatus.verified, CaseStatus.assigned, CaseStatus.in_progress]),
-    )).scalar()
-    critical_cases = db.execute(select(func.count(Case.id)).where(
-        Case.organization_id == org_id,
+    ), Case, current_user)).scalar()
+    critical_cases = db.execute(_apply_org_scope(select(func.count(Case.id)).where(
         Case.urgency_level == UrgencyLevel.critical,
         Case.status != CaseStatus.closed,
-    )).scalar()
-    total_volunteers = db.execute(select(func.count(Volunteer.id)).where(Volunteer.organization_id == org_id)).scalar()
-    available_volunteers = db.execute(select(func.count(Volunteer.id)).where(
-        Volunteer.organization_id == org_id,
+    ), Case, current_user)).scalar()
+    total_volunteers = db.execute(
+        _apply_org_scope(select(func.count(Volunteer.id)), Volunteer, current_user)
+    ).scalar()
+    available_volunteers = db.execute(_apply_org_scope(select(func.count(Volunteer.id)).where(
         Volunteer.availability_status == AvailabilityStatus.available,
-    )).scalar()
-    total_households = db.execute(select(func.count(Household.id)).where(Household.organization_id == org_id)).scalar()
-    low_stock = db.execute(select(func.count(InventoryItem.id)).where(
-        InventoryItem.organization_id == org_id,
+    ), Volunteer, current_user)).scalar()
+    total_households = db.execute(
+        _apply_org_scope(select(func.count(Household.id)), Household, current_user)
+    ).scalar()
+    low_stock = db.execute(_apply_org_scope(select(func.count(InventoryItem.id)).where(
         InventoryItem.status.in_([InventoryStatus.low_stock, InventoryStatus.out_of_stock]),
-    )).scalar()
-    active_alerts = db.execute(select(func.count(Alert.id)).where(
-        Alert.organization_id == org_id,
+    ), InventoryItem, current_user)).scalar()
+    active_alerts = db.execute(_apply_org_scope(select(func.count(Alert.id)).where(
         Alert.status == AlertStatus.active,
-    )).scalar()
+    ), Alert, current_user)).scalar()
 
     # Cases by status
     status_result = db.execute(
-        select(Case.status, func.count(Case.id)).where(Case.organization_id == org_id).group_by(Case.status)
+        _apply_org_scope(
+            select(Case.status, func.count(Case.id)).group_by(Case.status),
+            Case,
+            current_user,
+        )
     )
     cases_by_status = {row[0].value: row[1] for row in status_result}
 
     # Cases by category
     cat_result = db.execute(
-        select(Case.category, func.count(Case.id)).where(Case.organization_id == org_id).group_by(Case.category)
+        _apply_org_scope(
+            select(Case.category, func.count(Case.id)).group_by(Case.category),
+            Case,
+            current_user,
+        )
     )
     cases_by_category = {row[0].value: row[1] for row in cat_result}
 
@@ -81,7 +95,11 @@ def get_dashboard_summary(
             "status": c.status.value,
         }
         for c in db.execute(
-            select(Case).where(Case.organization_id == org_id).order_by(Case.created_at.desc()).limit(5)
+            _apply_org_scope(
+                select(Case).order_by(Case.created_at.desc()).limit(5),
+                Case,
+                current_user,
+            )
         ).scalars()
     ]
 
@@ -107,10 +125,10 @@ def get_dashboard_summary(
 def report_cases(
     status: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permissions("reports:view")),
 ):
     """Summary report of cases with optional status filter."""
-    q = select(Case).where(Case.organization_id == current_user.organization_id)
+    q = _apply_org_scope(select(Case), Case, current_user)
     if status:
         q = q.where(Case.status == status)
     cases = [
@@ -132,7 +150,7 @@ def report_cases(
 @router.get("/reports/volunteers", response_model=APIResponse[dict])
 def report_volunteers(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permissions("reports:view")),
 ):
     volunteers = [
         {
@@ -143,7 +161,7 @@ def report_volunteers(
             "active_assignments": v.active_assignment_count,
         }
         for v in db.execute(
-            select(Volunteer).where(Volunteer.organization_id == current_user.organization_id)
+            _apply_org_scope(select(Volunteer), Volunteer, current_user)
         ).scalars()
     ]
     return {"success": True, "data": {"volunteers": volunteers, "count": len(volunteers)}}
@@ -152,7 +170,7 @@ def report_volunteers(
 @router.get("/reports/inventory", response_model=APIResponse[dict])
 def report_inventory(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permissions("reports:view")),
 ):
     items = [
         {
@@ -164,7 +182,7 @@ def report_inventory(
             "location": i.location_name,
         }
         for i in db.execute(
-            select(InventoryItem).where(InventoryItem.organization_id == current_user.organization_id)
+            _apply_org_scope(select(InventoryItem), InventoryItem, current_user)
         ).scalars()
     ]
     return {"success": True, "data": {"items": items, "count": len(items)}}
@@ -173,11 +191,15 @@ def report_inventory(
 @router.get("/exports/cases.csv")
 def export_cases_csv(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permissions("reports:view")),
 ):
     """Stream cases as a CSV download."""
     cases = db.execute(
-        select(Case).where(Case.organization_id == current_user.organization_id).order_by(Case.created_at.desc())
+        _apply_org_scope(
+            select(Case).order_by(Case.created_at.desc()),
+            Case,
+            current_user,
+        )
     ).scalars().all()
 
     buf = io.StringIO()
@@ -206,7 +228,7 @@ def export_cases_csv(
 @router.get("/exports/cases.pdf")
 def export_cases_pdf(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permissions("reports:view")),
 ):
     """Export cases as a PDF report using ReportLab."""
     from reportlab.lib.pagesizes import A4
@@ -215,8 +237,11 @@ def export_cases_pdf(
     from reportlab.lib.styles import getSampleStyleSheet
 
     cases = db.execute(
-        select(Case).where(Case.organization_id == current_user.organization_id)
-        .order_by(Case.created_at.desc()).limit(100)
+        _apply_org_scope(
+            select(Case).order_by(Case.created_at.desc()).limit(100),
+            Case,
+            current_user,
+        )
     ).scalars().all()
 
     buf = io.BytesIO()
