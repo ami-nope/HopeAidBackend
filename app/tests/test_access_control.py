@@ -182,4 +182,4 @@ async def test_admin_can_create_phone_only_account(client, admin_headers, test_o
     data = resp.json()["data"]
     assert data["role"] == "volunteer"
     assert data["phone"] == "+15552349876"
-    assert data["email"].startswith("phone_15552349876@")
+    assert data["email"] is None

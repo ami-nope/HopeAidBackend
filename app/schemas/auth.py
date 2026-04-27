@@ -7,6 +7,7 @@ from pydantic import EmailStr, Field, field_validator, model_validator
 
 from app.core.constants import UserRole
 from app.schemas.common import HopeAidBase
+from app.utils.contact import sanitize_placeholder_email
 
 
 class RegisterRequest(HopeAidBase):
@@ -66,10 +67,15 @@ class UserOut(HopeAidBase):
     id: UUID
     organization_id: Optional[UUID]
     name: str
-    email: str
+    email: Optional[str]
     phone: Optional[str]
     role: UserRole
     is_active: bool
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def hide_placeholder_email(cls, value: Optional[str]) -> Optional[str]:
+        return sanitize_placeholder_email(value)
 
 
 class MeResponse(HopeAidBase):

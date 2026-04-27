@@ -4,10 +4,11 @@ from datetime import date, time
 from typing import Optional
 from uuid import UUID
 
-from pydantic import EmailStr, Field
+from pydantic import EmailStr, Field, field_validator
 
 from app.core.constants import AvailabilityStatus, DutyType
 from app.schemas.common import HopeAidBase
+from app.utils.contact import sanitize_placeholder_email
 
 
 class VolunteerCreate(HopeAidBase):
@@ -63,6 +64,11 @@ class VolunteerOut(HopeAidBase):
     reliability_score: float
     availability_status: AvailabilityStatus
     active_assignment_count: int
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def hide_placeholder_email(cls, value: Optional[str]) -> Optional[str]:
+        return sanitize_placeholder_email(value)
 
 
 class AvailabilitySlotCreate(HopeAidBase):

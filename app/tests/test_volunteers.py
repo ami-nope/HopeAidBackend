@@ -33,6 +33,28 @@ async def test_list_volunteers(client, admin_headers):
 
 
 @pytest.mark.asyncio
+async def test_list_volunteers_hides_placeholder_email(
+    client, admin_headers, db_session, test_org
+):
+    from app.models.volunteer import Volunteer
+
+    volunteer = Volunteer(
+        organization_id=test_org.id,
+        name="Phone Only Volunteer",
+        phone="+15557654321",
+        email="phone_15557654321@phone.hopeaid.local",
+    )
+    db_session.add(volunteer)
+    db_session.commit()
+
+    resp = await client.get("/api/v1/volunteers", headers=admin_headers)
+    assert resp.status_code == 200
+    volunteer_data = next(item for item in resp.json()["data"] if item["id"] == str(volunteer.id))
+    assert volunteer_data["phone"] == "+15557654321"
+    assert volunteer_data["email"] is None
+
+
+@pytest.mark.asyncio
 async def test_add_availability(client, admin_headers):
     # Create volunteer first
     create_resp = await client.post("/api/v1/volunteers", headers=admin_headers, json={

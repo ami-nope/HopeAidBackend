@@ -124,6 +124,42 @@ async def test_get_me(client, admin_headers):
 
 
 @pytest.mark.asyncio
+async def test_get_me_hides_placeholder_email_for_phone_only_accounts(
+    client, db_session, test_org
+):
+    from app.core.constants import UserRole
+    from app.core.security import hash_password
+    from app.models.user import User
+
+    user = User(
+        organization_id=test_org.id,
+        name="Phone User",
+        email="phone_15551230000@phone.hopeaid.local",
+        phone="+15551230000",
+        hashed_password=hash_password("Test@1234"),
+        role=UserRole.volunteer,
+    )
+    db_session.add(user)
+    db_session.commit()
+
+    login_resp = await client.post(
+        "/api/v1/auth/login",
+        json={"identifier": user.phone, "password": "Test@1234"},
+    )
+    assert login_resp.status_code == 200
+    token = login_resp.json()["data"]["access_token"]
+
+    resp = await client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()["data"]["user"]
+    assert data["phone"] == "+15551230000"
+    assert data["email"] is None
+
+
+@pytest.mark.asyncio
 async def test_me_unauthenticated(client):
     resp = await client.get("/api/v1/auth/me")
     assert resp.status_code == 401
