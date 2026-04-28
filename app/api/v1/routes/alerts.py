@@ -1,9 +1,10 @@
 """app/api/v1/routes/alerts.py — Alert and reminder endpoints. All sync."""
 
 from datetime import UTC, datetime
+from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -46,10 +47,16 @@ def create_alert(
 @router.get("/alerts", response_model=PaginatedResponse[AlertOut])
 def list_alerts(
     pagination: PaginationParams = Depends(get_pagination),
+    status: Literal["active", "resolved", "acknowledged", "all"] = Query(
+        default="active",
+        description="Filter alerts by lifecycle status. Use 'all' to include every status.",
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permissions("alerts:view")),
 ):
-    q = select(Alert).where(Alert.status == AlertStatus.active)
+    q = select(Alert)
+    if status != "all":
+        q = q.where(Alert.status == AlertStatus(status))
     if not (current_user.role == UserRole.super_admin and current_user.organization_id is None):
         q = q.where(Alert.organization_id == current_user.organization_id)
     total = db.execute(select(func.count()).select_from(q.subquery())).scalar()
@@ -78,6 +85,26 @@ def resolve_alert(
 
     alert.status = AlertStatus.resolved
     alert.resolved_at = datetime.now(UTC)
+    db.commit()
+    db.refresh(alert)
+    return {"success": True, "data": AlertOut.model_validate(alert)}
+
+
+@router.post("/alerts/{alert_id}/activate", response_model=APIResponse[AlertOut])
+def activate_alert(
+    alert_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permissions("alerts:resolve")),
+):
+    q = select(Alert).where(Alert.id == alert_id)
+    if not (current_user.role == UserRole.super_admin and current_user.organization_id is None):
+        q = q.where(Alert.organization_id == current_user.organization_id)
+    alert = db.execute(q).scalars().first()
+    if not alert:
+        raise HTTPException(404, "Alert not found")
+
+    alert.status = AlertStatus.active
+    alert.resolved_at = None
     db.commit()
     db.refresh(alert)
     return {"success": True, "data": AlertOut.model_validate(alert)}

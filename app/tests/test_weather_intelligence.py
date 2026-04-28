@@ -109,3 +109,33 @@ async def test_alerts_list_includes_weather_metadata(client, admin_headers, db_s
     listed = next(item for item in resp.json()["data"] if item["id"] == str(alert.id))
     assert listed["metadata_json"]["heading"] == "Volunteer travel risk near Chennai"
     assert listed["metadata_json"]["solution"] == "Delay travel by 30 minutes."
+
+
+@pytest.mark.asyncio
+async def test_resolved_alerts_can_be_listed_and_reactivated(client, admin_headers, db_session, test_org):
+    from datetime import UTC, datetime
+
+    from app.core.constants import AlertStatus, AlertType, RecipientType
+    from app.models.alert import Alert
+
+    alert = Alert(
+        organization_id=test_org.id,
+        type=AlertType.weather_risk,
+        message="Archived weather alert",
+        status=AlertStatus.resolved,
+        recipient_type=RecipientType.admin,
+        resolved_at=datetime.now(UTC),
+        metadata_json={"heading": "Archived weather alert"},
+    )
+    db_session.add(alert)
+    db_session.commit()
+
+    list_resp = await client.get("/api/v1/alerts?status=resolved", headers=admin_headers)
+    assert list_resp.status_code == 200
+    listed = next(item for item in list_resp.json()["data"] if item["id"] == str(alert.id))
+    assert listed["status"] == "resolved"
+
+    activate_resp = await client.post(f"/api/v1/alerts/{alert.id}/activate", headers=admin_headers)
+    assert activate_resp.status_code == 200
+    assert activate_resp.json()["data"]["status"] == "active"
+    assert activate_resp.json()["data"]["resolved_at"] is None
