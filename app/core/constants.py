@@ -89,6 +89,21 @@ class SourceType(str, Enum):
     voice = "voice"
 
 
+class GeocodeStatus(str, Enum):
+    not_requested = "not_requested"
+    pending = "pending"
+    resolved = "resolved"
+    failed = "failed"
+    manual_review = "manual_review"
+
+
+class WeatherRiskBand(str, Enum):
+    clear = "clear"
+    watch = "watch"
+    elevated = "elevated"
+    severe = "severe"
+
+
 # ─── Volunteer ───────────────────────────────────────────────────────────────
 
 class DutyType(str, Enum):
@@ -182,6 +197,7 @@ class AlertType(str, Enum):
     unassigned_critical = "unassigned_critical"
     conflict_detected = "conflict_detected"
     volunteer_overloaded = "volunteer_overloaded"
+    weather_risk = "weather_risk"
     system = "system"
 
 

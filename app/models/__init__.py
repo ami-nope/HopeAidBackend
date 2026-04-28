@@ -19,6 +19,7 @@ from app.models.alert import Alert  # noqa: F401
 from app.models.audit_log import AuditLog  # noqa: F401
 from app.models.report import ReportJob  # noqa: F401
 from app.models.form_template import FormTemplate  # noqa: F401
+from app.models.weather_intelligence import HazardAssessment, WeatherSnapshot  # noqa: F401
 
 __all__ = [
     "Organization",
@@ -38,4 +39,6 @@ __all__ = [
     "AuditLog",
     "ReportJob",
     "FormTemplate",
+    "WeatherSnapshot",
+    "HazardAssessment",
 ]

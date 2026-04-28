@@ -15,6 +15,8 @@ from app.models.alert import Alert
 from app.models.user import User
 from app.schemas.alert import AlertCreate, AlertOut
 from app.schemas.common import APIResponse, PaginatedResponse
+from app.schemas.weather_intelligence import WeatherBatchRunOut
+from app.services.weather_intelligence_service import WeatherIntelligenceService
 from app.utils.pagination import PaginationParams, build_pagination_meta, get_pagination
 
 router = APIRouter(tags=["Alerts & Reminders"])
@@ -80,12 +82,25 @@ def resolve_alert(
     return {"success": True, "data": AlertOut.model_validate(alert)}
 
 
+@router.post("/alerts/intelligence/run", response_model=APIResponse[WeatherBatchRunOut])
+def run_weather_intelligence_inline(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permissions("alerts:create")),
+):
+    service = WeatherIntelligenceService(db)
+    result = service.scan_due_cases(current_user.organization_id)
+    db.commit()
+    return {"success": True, "data": WeatherBatchRunOut(**result)}
+
+
 @router.post("/reminders/run", response_model=APIResponse[dict])
 def run_reminders(
     current_user: User = Depends(require_permissions("alerts:create")),
 ):
     """Manually trigger the reminder/alert check Celery tasks."""
     from app.workers.tasks.ai_tasks import check_unassigned_critical_cases, check_inventory_health
+    from app.workers.tasks.weather_tasks import scan_due_weather_cases
     check_unassigned_critical_cases.delay()
     check_inventory_health.delay()
+    scan_due_weather_cases.delay()
     return {"success": True, "data": {"message": "Reminder tasks queued"}}

@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -80,7 +80,7 @@ def list_forms(
 @router.post("/forms", response_model=APIResponse[dict], status_code=201)
 def create_form(
     form_name: str,
-    fields_json: list,
+    fields_json: list = Body(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permissions("admin:forms")),
 ):
@@ -99,7 +99,7 @@ def create_form(
 @router.put("/forms/{form_id}", response_model=APIResponse[dict])
 def update_form(
     form_id: UUID,
-    fields_json: list,
+    fields_json: list = Body(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permissions("admin:forms")),
 ):

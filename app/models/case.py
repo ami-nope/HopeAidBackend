@@ -12,9 +12,11 @@ from app.core.constants import (
     CaseCategory,
     CaseStatus,
     DisasterType,
+    GeocodeStatus,
     SourceType,
     UrgencyLevel,
     VerificationStatus,
+    WeatherRiskBand,
 )
 from app.db.base import Base, TimestampMixin, UUIDMixin
 
@@ -98,6 +100,30 @@ class Case(UUIDMixin, TimestampMixin, Base):
         SAEnum(SourceType, name="source_type_enum"),
         default=SourceType.manual,
         nullable=False,
+    )
+    geocode_status: Mapped[GeocodeStatus] = mapped_column(
+        SAEnum(GeocodeStatus, name="geocode_status_enum"),
+        default=GeocodeStatus.not_requested,
+        nullable=False,
+        index=True,
+    )
+    geocode_provider: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    geocode_confidence: Mapped[Optional[float]] = mapped_column(Numeric(5, 2), nullable=True)
+    district: Mapped[Optional[str]] = mapped_column(String(150), nullable=True, index=True)
+    state: Mapped[Optional[str]] = mapped_column(String(150), nullable=True, index=True)
+    weather_risk_band: Mapped[Optional[WeatherRiskBand]] = mapped_column(
+        SAEnum(WeatherRiskBand, name="weather_risk_band_enum"),
+        nullable=True,
+        index=True,
+    )
+    last_weather_checked_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    next_weather_check_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True,
     )
     confidence_score: Mapped[Optional[float]] = mapped_column(Numeric(5, 2), nullable=True)
     closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

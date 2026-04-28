@@ -164,6 +164,36 @@ class Settings(BaseSettings):
     OPENAI_MAX_TOKENS: int = 2048
     OPENAI_TEMPERATURE: float = 0.1
 
+    # Weather intelligence / geocoding
+    ENABLE_WEATHER_INTELLIGENCE: bool = True
+    GEOCODING_PROVIDER: str = "open_meteo"
+    GEOCODING_COUNTRY_CODE: str = "IN"
+    GEOCODING_LANGUAGE: str = "en"
+    GEOCODING_TIMEOUT_SECONDS: int = 15
+    OPEN_METEO_GEOCODING_URL: str = "https://geocoding-api.open-meteo.com/v1/search"
+    OPEN_METEO_FORECAST_URL: str = "https://api.open-meteo.com/v1/forecast"
+    WEATHER_MONITOR_FORECAST_HOURS: int = 12
+    WEATHER_MONITOR_CASE_SCAN_LIMIT: int = 200
+    WEATHER_MONITOR_CLEAR_INTERVAL_MINUTES: int = 180
+    WEATHER_MONITOR_WATCH_INTERVAL_MINUTES: int = 60
+    WEATHER_MONITOR_ELEVATED_INTERVAL_MINUTES: int = 30
+    WEATHER_MONITOR_SEVERE_INTERVAL_MINUTES: int = 30
+
+    # Provider slots you can paste real production credentials into later
+    MAPPLS_API_KEY: str = ""
+    MAPPLS_CLIENT_ID: str = ""
+    MAPPLS_CLIENT_SECRET: str = ""
+    MAPPLS_BASE_URL: str = "https://atlas.mappls.com"
+    WEATHER_WARNING_PROVIDER: str = "none"
+    IMD_WARNINGS_URL_TEMPLATE: str = ""
+    IMD_API_KEY: str = ""
+    IMD_REQUEST_TIMEOUT_SECONDS: int = 20
+
+    # Gemini is used only for the decision object + human alert text
+    GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-2.5-flash-lite"
+    GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta"
+
     # ─── Google APIs ──────────────────────────────────────────────────────────
     GOOGLE_APPLICATION_CREDENTIALS: str = ""
     GOOGLE_CLOUD_PROJECT: str = ""

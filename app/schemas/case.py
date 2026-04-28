@@ -10,9 +10,11 @@ from app.core.constants import (
     CaseCategory,
     CaseStatus,
     DisasterType,
+    GeocodeStatus,
     SourceType,
     UrgencyLevel,
     VerificationStatus,
+    WeatherRiskBand,
 )
 from app.schemas.common import HopeAidBase
 
@@ -93,6 +95,14 @@ class CaseOut(HopeAidBase):
     status: CaseStatus
     verification_status: VerificationStatus
     source_type: SourceType
+    geocode_status: GeocodeStatus
+    geocode_provider: Optional[str]
+    geocode_confidence: Optional[float]
+    district: Optional[str]
+    state: Optional[str]
+    weather_risk_band: Optional[WeatherRiskBand]
+    last_weather_checked_at: Optional[datetime]
+    next_weather_check_at: Optional[datetime]
     confidence_score: Optional[float]
     created_at: datetime
     updated_at: datetime

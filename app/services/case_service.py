@@ -17,7 +17,7 @@ from typing import Optional
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.core.constants import CaseStatus, UserRole, VerificationStatus
+from app.core.constants import CaseStatus, GeocodeStatus, UserRole, VerificationStatus
 from app.core.logging import get_logger
 from app.models.case import Case
 from app.models.person import Person
@@ -94,8 +94,19 @@ class CaseService:
             resource_needed=[r.model_dump() for r in data.resource_needed] if data.resource_needed else None,
             number_of_people_affected=data.number_of_people_affected,
             source_type=data.source_type,
+            geocode_status=(
+                GeocodeStatus.resolved
+                if data.latitude is not None and data.longitude is not None
+                else GeocodeStatus.pending
+                if data.location_name
+                else GeocodeStatus.not_requested
+            ),
+            geocode_provider="manual" if data.latitude is not None and data.longitude is not None else None,
             confidence_score=data.confidence_score,
             status=CaseStatus.new,
+            next_weather_check_at=datetime.now(UTC)
+            if data.location_name or (data.latitude is not None and data.longitude is not None)
+            else None,
         )
         self.db.add(case)
         self.db.flush()   # Flush to get the generated ID
@@ -165,6 +176,18 @@ class CaseService:
                 setattr(case, field, [r if isinstance(r, dict) else r.model_dump() for r in value])
             else:
                 setattr(case, field, value)
+
+        if {"location_name", "latitude", "longitude"} & set(data.model_dump(exclude_none=True).keys()):
+            if case.latitude is not None and case.longitude is not None:
+                case.geocode_status = GeocodeStatus.resolved
+                case.geocode_provider = case.geocode_provider or "manual"
+                case.next_weather_check_at = datetime.now(UTC)
+            elif case.location_name:
+                case.geocode_status = GeocodeStatus.pending
+                case.next_weather_check_at = datetime.now(UTC)
+            else:
+                case.geocode_status = GeocodeStatus.not_requested
+                case.next_weather_check_at = None
 
         # Recompute risk score if relevant fields changed
         if data.urgency_level or data.number_of_people_affected or data.disaster_type:

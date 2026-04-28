@@ -13,6 +13,7 @@ celery_app = Celery(
         "app.workers.tasks.ocr_tasks",
         "app.workers.tasks.ai_tasks",
         "app.workers.tasks.report_tasks",
+        "app.workers.tasks.weather_tasks",
     ],
 )
 
@@ -29,6 +30,7 @@ celery_app.conf.update(
         "app.workers.tasks.ocr_tasks.*": {"queue": "ocr"},
         "app.workers.tasks.ai_tasks.*": {"queue": "ai"},
         "app.workers.tasks.report_tasks.*": {"queue": "reports"},
+        "app.workers.tasks.weather_tasks.*": {"queue": "ai"},
     },
     # ─── Celery Beat Schedule ──────────────────────────────────────────────
     beat_schedule={
@@ -46,6 +48,10 @@ celery_app.conf.update(
         "inventory-health-check": {
             "task": "app.workers.tasks.ai_tasks.check_inventory_health",
             "schedule": crontab(hour=6, minute=0),
+        },
+        "weather-intelligence-check": {
+            "task": "app.workers.tasks.weather_tasks.scan_due_weather_cases",
+            "schedule": crontab(minute="*/30"),
         },
     },
 )

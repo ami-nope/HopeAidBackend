@@ -20,7 +20,13 @@ from app.schemas.case import (
     DuplicateCheckResult,
 )
 from app.schemas.common import APIResponse, PaginatedResponse
+from app.schemas.weather_intelligence import (
+    CaseLocationRefreshOut,
+    WeatherBatchRunOut,
+    WeatherIntelligenceRunOut,
+)
 from app.services.case_service import CaseService
+from app.services.weather_intelligence_service import WeatherIntelligenceService
 from app.utils.pagination import build_pagination_meta, get_pagination, PaginationParams
 
 router = APIRouter(prefix="/cases", tags=["Cases"])
@@ -68,6 +74,17 @@ def list_cases(
     }
 
 
+@router.post("/weather-intelligence/run", response_model=APIResponse[WeatherBatchRunOut])
+def run_weather_intelligence_batch(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permissions("alerts:create")),
+):
+    service = WeatherIntelligenceService(db)
+    result = service.scan_due_cases(current_user.organization_id)
+    db.commit()
+    return {"success": True, "data": WeatherBatchRunOut(**result)}
+
+
 @router.get("/assigned/me", response_model=PaginatedResponse[CaseOut])
 def list_my_assigned_cases(
     pagination: PaginationParams = Depends(get_pagination),
@@ -95,6 +112,107 @@ def list_my_assigned_cases(
         "success": True,
         "data": [CaseOut.model_validate(c) for c in cases],
         "meta": build_pagination_meta(total, pagination.page, pagination.page_size),
+    }
+
+
+@router.post("/{case_id}/refresh-location", response_model=APIResponse[CaseLocationRefreshOut])
+def refresh_case_location(
+    case_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permissions("cases:update")),
+):
+    service = CaseService(db, current_user)
+    case = service.get_case(case_id)
+    if not case:
+        raise HTTPException(404, "Case not found")
+
+    intelligence = WeatherIntelligenceService(db)
+    intelligence.refresh_case_location(case)
+    db.commit()
+    db.refresh(case)
+    return {
+        "success": True,
+        "data": CaseLocationRefreshOut(
+            case_id=case.id,
+            geocode_status=case.geocode_status,
+            latitude=float(case.latitude) if case.latitude is not None else None,
+            longitude=float(case.longitude) if case.longitude is not None else None,
+            district=case.district,
+            state=case.state,
+            geocode_provider=case.geocode_provider,
+            geocode_confidence=float(case.geocode_confidence) if case.geocode_confidence is not None else None,
+        ),
+    }
+
+
+@router.post("/{case_id}/weather-intelligence", response_model=APIResponse[WeatherIntelligenceRunOut])
+def run_case_weather_intelligence(
+    case_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permissions("alerts:create")),
+):
+    service = CaseService(db, current_user)
+    case = service.get_case(case_id)
+    if not case:
+        raise HTTPException(404, "Case not found")
+
+    intelligence = WeatherIntelligenceService(db)
+    result = intelligence.run_case_monitor(case)
+    db.commit()
+    db.refresh(case)
+
+    return {
+        "success": True,
+        "data": WeatherIntelligenceRunOut(
+            case_id=case.id,
+            geocode_status=case.geocode_status,
+            weather_risk_band=case.weather_risk_band,
+            last_weather_checked_at=case.last_weather_checked_at,
+            next_weather_check_at=case.next_weather_check_at,
+            snapshot=(
+                None
+                if not result.snapshot
+                else {
+                    "id": result.snapshot.id,
+                    "case_id": result.snapshot.case_id,
+                    "forecast_provider": result.snapshot.forecast_provider,
+                    "warning_provider": result.snapshot.warning_provider,
+                    "latitude": float(result.snapshot.latitude),
+                    "longitude": float(result.snapshot.longitude),
+                    "location_label": result.snapshot.location_label,
+                    "collected_at": result.snapshot.collected_at,
+                    "forecast_window_end": result.snapshot.forecast_window_end,
+                    "summary_json": result.snapshot.summary_json,
+                }
+            ),
+            assessment=(
+                None
+                if not result.assessment
+                else {
+                    "id": result.assessment.id,
+                    "case_id": result.assessment.case_id,
+                    "weather_snapshot_id": result.assessment.weather_snapshot_id,
+                    "risk_band": result.assessment.risk_band,
+                    "severity": result.assessment.severity,
+                    "hazard_score": float(result.assessment.hazard_score),
+                    "danger_for_community": result.assessment.danger_for_community,
+                    "can_be_solved": result.assessment.can_be_solved,
+                    "danger_on_volunteers": result.assessment.danger_on_volunteers,
+                    "heading": result.assessment.heading,
+                    "description": result.assessment.description,
+                    "full_text": result.assessment.full_text,
+                    "solution": result.assessment.solution,
+                    "reason_codes_json": result.assessment.reason_codes_json,
+                    "factors_json": result.assessment.factors_json,
+                    "providers_json": result.assessment.providers_json,
+                    "model_used": result.assessment.model_used,
+                    "prompt_version": result.assessment.prompt_version,
+                    "alert_emitted": result.assessment.alert_emitted,
+                    "created_at": result.assessment.created_at,
+                    "updated_at": result.assessment.updated_at,
+                }
+            ),
+        ),
     }
 
 
