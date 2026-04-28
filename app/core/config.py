@@ -9,6 +9,7 @@ import json
 import socket
 from functools import lru_cache
 from typing import Annotated, List, Optional
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -77,6 +78,7 @@ class Settings(BaseSettings):
         default="postgresql+psycopg2://hopeaid:hopeaid@localhost:5432/hopeaid",
         description="Sync PostgreSQL connection string using psycopg2",
     )
+    DATABASE_CONNECT_TIMEOUT_SECONDS: int = 5
     DATABASE_POOL_SIZE: int = 10
     DATABASE_MAX_OVERFLOW: int = 20
 
@@ -93,13 +95,24 @@ class Settings(BaseSettings):
         """
         for wrong_prefix, correct_prefix in _ASYNC_TO_SYNC_DRIVERS.items():
             if v.startswith(wrong_prefix):
-                return v.replace(wrong_prefix, correct_prefix, 1)
-        return v
+                v = v.replace(wrong_prefix, correct_prefix, 1)
+                break
+
+        try:
+            parts = urlsplit(v)
+            query_items = dict(parse_qsl(parts.query, keep_blank_values=True))
+            query_items.setdefault("connect_timeout", str(cls.model_fields["DATABASE_CONNECT_TIMEOUT_SECONDS"].default))
+            return urlunsplit(
+                (parts.scheme, parts.netloc, parts.path, urlencode(query_items), parts.fragment)
+            )
+        except ValueError:
+            return v
 
     # ─── Redis ────────────────────────────────────────────────────────────────
     REDIS_URL: str = "redis://localhost:6379/0"
     CELERY_BROKER_URL: str = "redis://localhost:6379/1"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
+    REDIS_CONNECT_TIMEOUT_SECONDS: int = 5
 
     # ─── CORS ─────────────────────────────────────────────────────────────────
     # Accept either comma-separated string or JSON list string from env.

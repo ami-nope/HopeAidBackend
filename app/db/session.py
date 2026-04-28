@@ -86,5 +86,7 @@ def get_redis() -> redis.Redis:
             settings.REDIS_URL,
             encoding="utf-8",
             decode_responses=True,   # Always returns str, not bytes
+            socket_connect_timeout=settings.REDIS_CONNECT_TIMEOUT_SECONDS,
+            socket_timeout=settings.REDIS_CONNECT_TIMEOUT_SECONDS,
         )
     return _redis_client

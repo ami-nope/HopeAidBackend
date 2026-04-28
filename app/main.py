@@ -7,6 +7,7 @@ No async lifespan needed — startup checks use sync DB connection.
 """
 
 import uuid
+from datetime import UTC, datetime
 from threading import Lock
 from typing import Any
 
@@ -74,6 +75,16 @@ def _to_json_safe(value: Any) -> Any:
     return str(value)
 
 
+def _dependency_payload(ok: bool | None = None, error: str | None = None) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "ok": ok,
+        "checked_at": datetime.now(UTC).isoformat(),
+    }
+    if error:
+        payload["error"] = error
+    return payload
+
+
 # ─── App Factory ──────────────────────────────────────────────────────────────
 
 def create_app() -> FastAPI:
@@ -91,31 +102,50 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if not settings.is_production else None,
         openapi_url="/openapi.json" if not settings.is_production else None,
     )
+    app.state.dependency_checks = {
+        "database": _dependency_payload(),
+        "redis": _dependency_payload(),
+        "tables": _dependency_payload(),
+    }
 
     # ── Startup event ────────────────────────────────────────────────────────
     @app.on_event("startup")
     def on_startup():
-        """Verify external dependencies and ensure tables exist on startup."""
+        """Verify external dependencies without blocking process liveness."""
         logger.info(
             "HopeAid backend starting",
             version=settings.APP_VERSION,
             environment=settings.ENVIRONMENT,
         )
+        dependency_checks = app.state.dependency_checks
+
         try:
             from sqlalchemy import text
 
-            # Quick connectivity check — fails fast if DB is unreachable
             with engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
-
-            # Auth refresh tokens depend on Redis; fail startup if it is unavailable.
-            get_redis().ping()
-
-            _create_tables_once()
-            logger.info("Database and Redis connections verified; tables ensured")
+            dependency_checks["database"] = _dependency_payload(ok=True)
+            logger.info("Database connectivity verified")
         except Exception as e:
-            logger.error("Dependency connection failed at startup", error=str(e))
-            raise
+            dependency_checks["database"] = _dependency_payload(ok=False, error=str(e))
+            dependency_checks["tables"] = _dependency_payload(ok=False, error="Skipped because database check failed")
+            logger.warning("Database connectivity check failed during startup", error=str(e))
+        else:
+            try:
+                _create_tables_once()
+                dependency_checks["tables"] = _dependency_payload(ok=True)
+                logger.info("Database tables ensured")
+            except Exception as e:
+                dependency_checks["tables"] = _dependency_payload(ok=False, error=str(e))
+                logger.warning("Database table initialization failed during startup", error=str(e))
+
+        try:
+            get_redis().ping()
+            dependency_checks["redis"] = _dependency_payload(ok=True)
+            logger.info("Redis connectivity verified")
+        except Exception as e:
+            dependency_checks["redis"] = _dependency_payload(ok=False, error=str(e))
+            logger.warning("Redis connectivity check failed during startup", error=str(e))
 
     @app.on_event("shutdown")
     def on_shutdown():
@@ -189,11 +219,28 @@ def create_app() -> FastAPI:
     # ── Health Check ──────────────────────────────────────────────────────────
     @app.get("/health", tags=["Health"])
     def health():
+        checks = getattr(app.state, "dependency_checks", {})
+        has_failures = any(check.get("ok") is False for check in checks.values())
         return {
-            "status": "healthy",
+            "status": "degraded" if has_failures else "healthy",
             "version": settings.APP_VERSION,
             "environment": settings.ENVIRONMENT,
+            "checks": checks,
         }
+
+    @app.get("/ready", tags=["Health"])
+    def ready():
+        checks = getattr(app.state, "dependency_checks", {})
+        has_failures = any(check.get("ok") is False for check in checks.values())
+        payload = {
+            "status": "ready" if not has_failures else "not_ready",
+            "version": settings.APP_VERSION,
+            "environment": settings.ENVIRONMENT,
+            "checks": checks,
+        }
+        if has_failures:
+            return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content=payload)
+        return payload
 
     @app.get("/", tags=["Root"])
     def root():

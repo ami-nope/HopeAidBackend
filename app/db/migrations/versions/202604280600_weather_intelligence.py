@@ -26,6 +26,7 @@ def upgrade() -> None:
         "failed",
         "manual_review",
         name="geocode_status_enum",
+        create_type=False,
     )
     geocode_status_enum.create(bind, checkfirst=True)
 
@@ -35,6 +36,7 @@ def upgrade() -> None:
         "elevated",
         "severe",
         name="weather_risk_band_enum",
+        create_type=False,
     )
     weather_risk_band_enum.create(bind, checkfirst=True)
 
@@ -44,6 +46,7 @@ def upgrade() -> None:
         "elevated",
         "severe",
         name="hazard_assessment_risk_band_enum",
+        create_type=False,
     )
     hazard_risk_band_enum.create(bind, checkfirst=True)
 
