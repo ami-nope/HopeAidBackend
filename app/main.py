@@ -132,9 +132,13 @@ def create_app() -> FastAPI:
             logger.warning("Database connectivity check failed during startup", error=str(e))
         else:
             try:
-                _create_tables_once()
-                dependency_checks["tables"] = _dependency_payload(ok=True)
-                logger.info("Database tables ensured")
+                if settings.should_auto_create_tables_on_startup:
+                    _create_tables_once()
+                    dependency_checks["tables"] = _dependency_payload(ok=True)
+                    logger.info("Database tables ensured")
+                else:
+                    dependency_checks["tables"] = _dependency_payload(ok=True)
+                    logger.info("Automatic table creation skipped")
             except Exception as e:
                 dependency_checks["tables"] = _dependency_payload(ok=False, error=str(e))
                 logger.warning("Database table initialization failed during startup", error=str(e))

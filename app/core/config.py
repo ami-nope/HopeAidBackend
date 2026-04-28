@@ -62,6 +62,7 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"   # development | staging | production
     DEBUG: bool = False
     API_PREFIX: str = "/api/v1"
+    AUTO_CREATE_TABLES_ON_STARTUP: Optional[bool] = None
 
     # ─── Security ─────────────────────────────────────────────────────────────
     SECRET_KEY: str = Field(
@@ -235,6 +236,13 @@ class Settings(BaseSettings):
     @property
     def is_development(self) -> bool:
         return self.ENVIRONMENT == "development"
+
+    @property
+    def should_auto_create_tables_on_startup(self) -> bool:
+        """Default to local-only table bootstrap unless explicitly overridden."""
+        if self.AUTO_CREATE_TABLES_ON_STARTUP is not None:
+            return self.AUTO_CREATE_TABLES_ON_STARTUP
+        return self.is_development
 
 
 @lru_cache
