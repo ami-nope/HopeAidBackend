@@ -7,11 +7,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.core.constants import UserRole
+from app.core.constants import AlertType, RecipientType, UserRole
 from app.api.v1.deps import get_current_user, require_permissions
 from app.core.constants import AlertStatus
 from app.db.session import get_db
 from app.models.alert import Alert
+from app.models.case import Case
 from app.models.user import User
 from app.schemas.alert import AlertCreate, AlertOut
 from app.schemas.common import APIResponse, PaginatedResponse
@@ -91,6 +92,77 @@ def run_weather_intelligence_inline(
     result = service.scan_due_cases(current_user.organization_id)
     db.commit()
     return {"success": True, "data": WeatherBatchRunOut(**result)}
+
+
+@router.post("/alerts/intelligence/simulate", response_model=APIResponse[AlertOut], status_code=201)
+def simulate_weather_alert(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permissions("alerts:create")),
+):
+    org_id = current_user.organization_id
+    if org_id is None:
+        raise HTTPException(400, "organization_id is required for alert simulation")
+
+    case = db.execute(
+        select(Case)
+        .where(Case.organization_id == org_id)
+        .order_by(Case.created_at.desc())
+        .limit(1)
+    ).scalars().first()
+
+    location_label = None
+    if case:
+        location_label = case.location_name or case.title
+    location_label = location_label or "the active response area"
+
+    message = f"Simulation: heavy rain may disrupt volunteers near {location_label}"
+    metadata = {
+        "simulation": True,
+        "heading": f"Simulated weather risk near {location_label}",
+        "description": "Heavy rain and wind may slow volunteer movement and delay relief delivery.",
+        "full_text": (
+            f"This simulated alert tests the weather intelligence pipeline for {location_label}. "
+            "Use it to confirm alert rendering, expansion, and admin workflows."
+        ),
+        "solution": "Delay volunteer dispatch by 30 minutes, verify road access, and contact the affected households.",
+        "severity": "high",
+        "danger_for_community": True,
+        "can_be_solved": True,
+        "danger_on_volunteers": True,
+        "providers": {
+            "forecast_provider": "simulation",
+            "warning_provider": "simulation",
+            "model_used": "simulation",
+        },
+    }
+
+    alert = db.execute(
+        select(Alert).where(
+            Alert.organization_id == org_id,
+            Alert.type == AlertType.weather_risk,
+            Alert.status == AlertStatus.active,
+            Alert.message == message,
+        )
+    ).scalars().first()
+
+    if alert:
+        alert.case_id = case.id if case else None
+        alert.recipient_type = RecipientType.admin
+        alert.metadata_json = metadata
+    else:
+        alert = Alert(
+            organization_id=org_id,
+            case_id=case.id if case else None,
+            type=AlertType.weather_risk,
+            message=message,
+            recipient_type=RecipientType.admin,
+            metadata_json=metadata,
+        )
+        db.add(alert)
+
+    db.commit()
+    db.refresh(alert)
+    return {"success": True, "data": AlertOut.model_validate(alert)}
 
 
 @router.post("/reminders/run", response_model=APIResponse[dict])

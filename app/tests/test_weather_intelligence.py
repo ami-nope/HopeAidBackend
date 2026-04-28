@@ -62,6 +62,28 @@ async def test_run_weather_intelligence_batch_endpoint(client, admin_headers, mo
 
 
 @pytest.mark.asyncio
+async def test_simulate_weather_alert_endpoint(client, admin_headers):
+    create_resp = await client.post("/api/v1/cases", headers=admin_headers, json={
+        "title": "Delhi supply delay",
+        "category": "food",
+        "urgency_level": "high",
+        "location_name": "Lajpat Nagar Delhi",
+    })
+    assert create_resp.status_code == 201
+    case_id = create_resp.json()["data"]["id"]
+
+    resp = await client.post("/api/v1/alerts/intelligence/simulate", headers=admin_headers)
+    assert resp.status_code == 201
+
+    data = resp.json()["data"]
+    assert data["type"] == "weather_risk"
+    assert data["case_id"] == case_id
+    assert data["metadata_json"]["simulation"] is True
+    assert data["metadata_json"]["danger_for_community"] is True
+    assert data["metadata_json"]["danger_on_volunteers"] is True
+
+
+@pytest.mark.asyncio
 async def test_alerts_list_includes_weather_metadata(client, admin_headers, db_session, test_org):
     from app.core.constants import AlertType, RecipientType
     from app.models.alert import Alert
